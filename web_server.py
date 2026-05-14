@@ -6,7 +6,7 @@
 
 브라우저에서 http://localhost:8000 접속 → 폼 입력 → 조회.
 
-기존 srt_watcher / ktx_watcher_spa 의 Playwright 검색 모듈을 재사용하지만
+기존 srt_watcher / ktx_watcher 의 Playwright 검색 모듈을 재사용하지만
 필터(좌석 잔여/시간 허용) 는 풀어 두어 해당 날짜의 *모든* 스케줄을 반환한다.
 """
 
@@ -27,9 +27,9 @@ from srt_watcher.srt.client import SRTClient, _attach_popup_guard, safe_click
 from srt_watcher.srt import search as srt_search
 from srt_watcher.srt import selectors as srt_selectors
 
-from ktx_watcher_spa.config import KTXAConfig
-from ktx_watcher_spa.korail.client import KorailSPAClient
-from ktx_watcher_spa.korail import search as ktx_search
+from ktx_watcher.config import KTXAConfig
+from ktx_watcher.korail.client import KorailSPAClient
+from ktx_watcher.korail import search as ktx_search
 
 
 LOGGER = logging.getLogger("web_server")
