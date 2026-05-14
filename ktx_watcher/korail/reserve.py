@@ -1,0 +1,245 @@
+"""Korail SPA reservation flow.
+
+scope: 결제 *직전* 단계까지만. 실제 결제(카드 결제) 자동화는 본 variant 밖.
+
+흐름:
+  1. ensure_logged_in: /ticket/login 으로 가서 redirect 되는지 확인.
+     안 되어 있으면 자격증명 입력 후 로그인.
+  2. attempt_reservation: 결과 row 의 '예약하기' 클릭 → 후속 확정 버튼 한 번 클릭 →
+     '결제하기' / '예약완료' 키워드 보이면 통과.
+"""
+
+from __future__ import annotations
+
+import logging
+import time as _time
+from typing import Any, Dict
+
+from playwright.sync_api import Page, TimeoutError as PWTimeoutError
+
+from ..config import KTXAConfig
+from . import CaptchaDetected, LoginError, SiteLayoutChanged, UserActionRequired
+from . import selectors as S
+from .client import (
+    KorailSPAClient,
+    dismiss_all_popups,
+    dismiss_macro_notice,
+    human_click,
+    human_mouse,
+    human_pause,
+    human_type,
+    safe_goto,
+)
+
+LOGGER = logging.getLogger("ktx_watcher_spa.korail.reserve")
+
+
+def _is_logged_in(page: Page) -> bool:
+    url = page.url or ""
+    if "/ticket/login" in url and page.locator(S.LOGIN_ID_INPUT).count() > 0:
+        return False
+    return page.locator(".gnb_login_y").count() > 0
+
+
+def ensure_logged_in(
+    client: KorailSPAClient,
+    config: KTXAConfig,
+) -> None:
+    page = client.main_page()
+
+    # 1) 메인 → 잠시 머무름 (자연스러운 세션 시그널)
+    safe_goto(page, S.MAIN_URL, timeout_ms=30_000)
+    human_pause(1.0, 2.0)
+    human_mouse(page)
+
+    # 2) 로그인 페이지 — 이미 로그인 상태면 redirect
+    safe_goto(page, S.LOGIN_URL, timeout_ms=30_000)
+    try:
+        page.wait_for_load_state("networkidle", timeout=10_000)
+    except Exception:
+        pass
+    human_pause(1.0, 2.0)
+
+    if "/ticket/login" not in (page.url or ""):
+        LOGGER.info("이미 로그인 상태 (url=%s)", page.url)
+        return
+
+    LOGGER.info("로그인 시도: user=%s***", config.ktxa_user[:4])
+
+    # 3) 보안 키보드 해제
+    try:
+        keysec = page.locator(S.LOGIN_KEYSEC_CHECK)
+        if keysec.count() > 0 and keysec.first.is_checked():
+            keysec.first.uncheck(timeout=3000)
+            human_pause(0.3, 0.6)
+    except Exception:
+        pass
+
+    dismiss_macro_notice(page)
+
+    # 4) ID/PW 입력 (사람-유사 typing)
+    try:
+        human_type(page.locator(S.LOGIN_ID_INPUT).first, config.ktxa_user)
+        human_pause(0.3, 0.6)
+        human_type(page.locator(S.LOGIN_PW_INPUT).first, config.ktxa_pass)
+    except PWTimeoutError as e:
+        raise SiteLayoutChanged(f"로그인 입력 selector 실패: {e}") from e
+
+    human_mouse(page)
+    human_pause(0.5, 1.0)
+
+    # 5) 제출
+    try:
+        human_click(page.locator(S.LOGIN_SUBMIT).first)
+    except PWTimeoutError as e:
+        raise SiteLayoutChanged(f"로그인 제출 실패: {e}") from e
+
+    # 6) redirect 대기
+    for _ in range(30):
+        _time.sleep(0.5)
+        if "/ticket/login" not in (page.url or ""):
+            LOGGER.info("로그인 성공 (url=%s)", page.url)
+            return
+    try:
+        page.wait_for_load_state("networkidle", timeout=8000)
+    except Exception:
+        pass
+
+    dismiss_macro_notice(page)
+
+    if "/ticket/login" in (page.url or ""):
+        # 에러 메시지 추출 시도
+        err = ""
+        for sel in (".ReactModal__Content .tit", ".ReactModal__Content", ".error_msg"):
+            try:
+                t = page.locator(sel).first.inner_text(timeout=500)
+                if t and t.strip():
+                    err = t.strip().replace("\n", " ")[:200]
+                    break
+            except Exception:
+                pass
+        if "통신 중 에러" in err:
+            raise CaptchaDetected(f"Korail 매크로 차단 (로그인 단계): {err}")
+        raise LoginError(f"로그인 후에도 /ticket/login (err={err!r})")
+
+    LOGGER.info("로그인 성공 (url=%s)", page.url)
+
+
+def attempt_reservation(
+    client: KorailSPAClient,
+    config: KTXAConfig,
+    target: Dict[str, Any],
+) -> None:
+    """결과 row 의 예약 버튼 클릭 → 확정 모달까지 진행.
+
+    target: search.perform_search 가 만든 dict.
+    """
+    page = client.main_page()
+    LOGGER.info(
+        "예약 시도: %s→%s %s %s [%s]",
+        target["origin"], target["dest"], target["date"],
+        target["depart"], target["seat_class"],
+    )
+
+    is_first = "특실" in (target.get("seat_class") or "")
+    seat_key = "특실" if is_first else "일반실"
+    depart_str = target.get("depart", "")  # 'HH:MM'
+
+    # ─── STEP 1: 결과 row 의 가격 anchor 클릭 → row 선택 (파란 하이라이트) ───
+    # has_not_text 가 substring 매칭이라 "매진" 으로 필터하면 "매진임박" 도 같이 제외됨.
+    # 정규식 (?!임) 으로 "매진" 뒤에 "임" 없는 경우만 제외 → 매진임박 row(예약 가능)는 통과.
+    import re as _re
+    loc = (
+        page.locator("a")
+        .filter(has_text=seat_key)
+        .filter(has_text="원")
+        .filter(has_not_text=_re.compile(r"매진(?!임)"))
+    )
+    n = loc.count()
+    chosen = None
+    for i in range(n):
+        a = loc.nth(i)
+        try:
+            parent_text = a.evaluate(
+                """el => {
+                    let p = el;
+                    for (let d = 0; d < 6 && p; d++) {
+                        if (p.textContent && /\\d{1,2}:\\d{2}/.test(p.textContent)) {
+                            return p.textContent;
+                        }
+                        p = p.parentElement;
+                    }
+                    return '';
+                }"""
+            ) or ""
+            if depart_str and depart_str in parent_text:
+                chosen = a
+                LOGGER.info("예약 row 선택: snippet=%r", parent_text[:120])
+                break
+        except Exception:
+            continue
+
+    if chosen is None and n > 0:
+        chosen = loc.first
+        LOGGER.warning("depart 매칭 실패 → 첫 번째 가용 anchor 사용")
+
+    if chosen is None:
+        raise SiteLayoutChanged("예약 가능한 가격 anchor 미발견")
+
+    try:
+        human_click(chosen)
+    except PWTimeoutError as e:
+        raise SiteLayoutChanged(f"row 가격 anchor 클릭 실패: {e}") from e
+    human_pause(0.8, 1.4)
+    dismiss_all_popups(client.context)
+
+    # ─── STEP 2: 하단 "예매" 버튼 (button.reservbtn) 클릭 ───
+    book_btn = page.locator(S.BOOK_NOW_BUTTON).first
+    if book_btn.count() == 0:
+        raise SiteLayoutChanged("예매 버튼(button.reservbtn) 미발견 — row 선택이 안 됐을 수도")
+
+    try:
+        if book_btn.is_disabled():
+            raise UserActionRequired("예매 버튼이 비활성 — row 선택 상태가 풀렸을 수 있음")
+    except UserActionRequired:
+        raise
+    except Exception:
+        pass
+
+    try:
+        human_click(book_btn)
+        LOGGER.info("'예매' 버튼 클릭 (button.reservbtn)")
+    except PWTimeoutError as e:
+        raise SiteLayoutChanged(f"예매 버튼 클릭 실패: {e}") from e
+
+    # 예매 클릭 직후 popup window (이용안내, 본인인증 안내 등) 여러 번 뜰 수 있음.
+    # 1초 간격으로 3회 polling 하면서 모든 popup 의 '확인' 자동 클릭.
+    for poll_i in range(6):
+        _time.sleep(1.0)
+        dismissed = dismiss_all_popups(client.context)
+        if dismissed:
+            LOGGER.info("popup dismiss iter=%d, count=%d", poll_i, dismissed)
+
+    try:
+        page.wait_for_load_state("networkidle", timeout=15_000)
+    except Exception:
+        pass
+    human_pause(1.5, 2.5)
+
+    # ─── STEP 3: 결제 직전 페이지 도달 확인 ───
+    try:
+        html = page.content()
+    except Exception:
+        html = ""
+    url = page.url or ""
+    LOGGER.info("예매 클릭 후 url=%s", url)
+
+    success_kw = ("결제하기", "결제 수단", "예약 완료", "예약완료", "신용카드", "카드번호")
+    if any(kw in html for kw in success_kw):
+        LOGGER.info("✅ 결제 직전 단계 도달 — 예약 흐름 정상 통과")
+        return
+
+    LOGGER.warning("예매 클릭 후 결제 페이지 키워드 미감지 — url=%s", url)
+
+
+__all__ = ["ensure_logged_in", "attempt_reservation"]

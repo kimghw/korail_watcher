@@ -1,0 +1,68 @@
+# 바이너리 / 캐시
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 가상환경
+# .env
+.venv
+venv/
+env/
+.conda/
+.python-version
+
+# 패키지 / 빌드 결과물
+build/
+dist/
+develop-eggs/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# 테스트 / 커버리지
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+
+# IDE / 에디터 설정
+.vscode/
+.idea/
+*.iml
+
+# 로그 / 기타
+*.log
+*.pot
+*.pyproj
+*.suo
+*.user
+*.tmp
+*.DS_Store
+Thumbs.db
+
+
+# .runs 전체 무시
+.runs/
+runs/
+runs/artifacts/
+# artifacts 디렉토리 구조 유지 (파일은 무시)
+.runs/artifacts/*
+!.runs/artifacts/.gitkeep
+!.runs/artifacts/**/
+
+.env

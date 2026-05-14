@@ -1,0 +1,109 @@
+"""Korail SPA selectors.
+
+**모두 live-verified 2026-05-14** — CDP 직접 DOM probe 로 확정한 것만 보관한다.
+번들 정적 분석 추측은 제외 (이전 variant 에서 false-match 가 너무 많았음).
+"""
+
+# ───────────────────────── URLs ──────────────────────────
+SEARCH_URL = "https://www.korail.com/ticket/search/general"
+RESULT_URL_PATTERN = "**/search/list*"
+LOGIN_URL = "https://www.korail.com/ticket/login"
+MAIN_URL = "https://www.korail.com/ticket/main"
+
+# ─────────────────── 검색 폼 (search/general) ───────────────────
+ORIGIN_INPUT = "input[name='txtGoStart']"
+DEST_INPUT = "input[name='txtGoEnd']"
+ORIGIN_BTN = ".selectAreaWrap .start a.btn_pop-open"
+DEST_BTN = ".selectAreaWrap .end a.btn_pop-open"
+DATE_INPUT = "input#startDate"
+DATE_PICKER_BTN = "a.btn_pop.btn_d-day"
+SEARCH_SUBMIT = "button.btn_lookup"
+SEARCH_FORM_DETECT = "button.btn_lookup, input[name='txtGoStart']"
+
+# 역 선택 팝업
+STATION_POPUP = ".layerWrap.type_tranin-station-pop_wrap"
+STATION_POPUP_INPUT = "input[name='searchTxt']"
+STATION_POPUP_OPTION = ".layerWrap.type_tranin-station-pop_wrap span.ch_tag a"
+STATION_POPUP_CLOSE = ".layerWrap.type_tranin-station-pop_wrap .btn_close"
+
+# 날짜 picker
+DATE_POPUP = ".layerWrap.type_date-pop_wrap"
+DATE_POPUP_DAYS = ".layerWrap.type_date-pop_wrap .datepicker tbody td:not(.disabled) a[aria-disabled='false']"
+DATE_POPUP_HOURS = ".layerWrap.type_date-pop_wrap .timeSelect a"
+DATE_POPUP_NEXT = ".layerWrap.type_date-pop_wrap .slick-arrow.slick-next"
+DATE_POPUP_PREV = ".layerWrap.type_date-pop_wrap .slick-arrow.slick-prev"
+DATE_POPUP_APPLY = ".layerWrap.type_date-pop_wrap .btn_wrap button.btn_bn-blue"
+DATE_POPUP_CANCEL = ".layerWrap.type_date-pop_wrap .btn_wrap button.btn_pop-close"
+
+# ─────────────────── 결과 페이지 (search/list) ───────────────────
+RESULT_PAGE_DETECT = ".sub_content.tab-tck_view, ul.tab_bar.type4, .tck_confirm_no-data"
+RESULT_EMPTY_TEXT = "해당 스케줄에 운행하는 열차가 없습니다"
+RESULT_EMPTY_MARKER = ".tck_confirm_no-data"
+
+# 열차 종류 필터 탭 — VERIFIED 2026-05-14 (CDP elementFromPoint probe)
+#   <ul class="tab_bar type4 clear fl-l">
+#     <li><button class="all">전체</button></li>
+#     <li><button><div class="korail_logo_tab">KTX/KTX-산천</div></button></li>
+#     <li><button><div class="saemaeul_logo_tab">새마을호/ITX-새마을</div></button></li>
+#     <li><button><div class="mugung_logo_tab">무궁화호/누리로</div></button></li>
+#     <li><button><div class="chung_logo_tab">ITX-청춘</div></button></li>
+#   </ul>
+TRAIN_TYPE_TAB = {
+    "전체": "ul.tab_bar button.all",
+    "KTX": "ul.tab_bar button:has(div.korail_logo_tab)",
+    "KTX-산천": "ul.tab_bar button:has(div.korail_logo_tab)",
+    "새마을": "ul.tab_bar button:has(div.saemaeul_logo_tab)",
+    "ITX-새마을": "ul.tab_bar button:has(div.saemaeul_logo_tab)",
+    "무궁화": "ul.tab_bar button:has(div.mugung_logo_tab)",
+    "누리로": "ul.tab_bar button:has(div.mugung_logo_tab)",
+    "ITX-청춘": "ul.tab_bar button:has(div.chung_logo_tab)",
+}
+
+# ─────────────────── 매크로 안내 모달 / 팝업 ───────────────────
+# 두 가지 형태로 뜬다 (live observed):
+#   (A) 별도 Chrome window.open 팝업 → page.on('popup') 으로 잡힘
+#   (B) 메인 페이지 .ReactModalPortal > .ReactModal__Content
+MACRO_NOTICE_KEYWORDS = (
+    "CODE : -8002",
+    "CODE : -8003",
+    "안내 메시지",
+    "매크로 등 미허가",
+    "매크로 등의 프로그램",
+    "비정상적인 접속",
+)
+MODAL_CONFIRM_BUTTON = "button:has-text('확인')"
+
+# ─────────────────── 로그인 폼 ───────────────────
+LOGIN_ID_INPUT = "input#id"
+LOGIN_PW_INPUT = "input#password"
+LOGIN_KEYSEC_CHECK = "input#useKeySec"
+LOGIN_SUBMIT = ".login__form-cont button:has-text('로그인')"
+LOGIN_DONE_DETECT = ".gnb_login_y, a:has-text('로그아웃')"
+
+# ─────────────────── 결과 row (예약 단계) ───────────────────
+# DOM 구조 확정 selector. CDP probe (2026-05-14):
+# row 텍스트 예시:
+#   "KTX 101서대구,구포정차서울 → 부산(09:33 ~ 12:53)소요시간: 3시간 20분입석 + 좌석매진"
+# row 자체의 className 은 SPA 마다 바뀌므로 JS-side scan 으로 추출 (search.py 참조).
+# VERIFIED 2026-05-14: 결과 row 의 예약은 *2단계* 입력.
+# (1) row 의 가격 anchor (<a href="#none">) 클릭 → row 선택 (파란 하이라이트)
+# (2) 화면 하단 우측 고정 영역의 button.reservbtn ("예매") 클릭 → 예약 진행
+#
+# anchor 텍스트 예:
+#   "일반실23,700원5%적립"      (예약 가능)
+#   "특실(매진임박)33,200원..."  (예약 가능)
+#   "일반실23,700원5%적립매진"  (매진)
+SEAT_SELECTION_ANCHOR_GENERAL = (
+    "a:has-text('일반실'):has-text('원')"
+)
+SEAT_SELECTION_ANCHOR_SPECIAL = (
+    "a:has-text('특실'):has-text('원')"
+)
+# 하단 우측 "예매" 버튼 (활성 상태일 때만 클릭 가능). class 가 'reservbtn' (밑줄 X).
+# 'reserv_btn' (밑줄) 은 "예매 숨기기" 토글 버튼이라 다름.
+BOOK_NOW_BUTTON = "button.reservbtn"
+SEAT_SELECT_BUTTON = "button:has-text('좌석선택')"  # 직접 좌석 고를 때
+
+# Legacy aliases (호환)
+RESERVE_BUTTON_GENERAL = SEAT_SELECTION_ANCHOR_GENERAL
+RESERVE_BUTTON_SPECIAL = SEAT_SELECTION_ANCHOR_SPECIAL

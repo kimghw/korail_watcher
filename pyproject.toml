@@ -1,0 +1,25 @@
+[project]
+name = "srt-watcher"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "platformdirs>=4.5.1",
+    "playwright==1.55",
+    "playwright-stealth>=2.0.2",
+    "pydantic>=2.12.5",
+    "python-dotenv>=1.2.1",
+    "python-telegram-bot>=22.5",
+    "pyyaml>=6.0.3",
+    "requests>=2.32.5",
+    "rich>=14.2.0",
+    "tenacity>=9.1.2",
+    "tzdata>=2025.3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-mock>=3.15.1",
+]
