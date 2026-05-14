@@ -184,9 +184,29 @@ class KTXAConfig(BaseModel):
         return values
 
 
+_RAIL_SHARED_MAP = (
+    ("RAIL_ORIGIN", "KTXA_ORIGIN"),
+    ("RAIL_DEST", "KTXA_DEST"),
+    ("RAIL_DATE", "KTXA_DATE"),
+    ("RAIL_TIMES", "KTXA_TIMES"),
+    ("RAIL_TIME_WINDOW", "KTXA_TIME_WINDOW"),
+    ("RAIL_PASSENGERS", "KTXA_PASSENGERS"),
+    ("RAIL_SEAT_CLASS", "KTXA_SEAT_CLASS"),
+    ("RAIL_TOLERANCE_MIN", "KTXA_TOLERANCE_MIN"),
+)
+
+
+def _apply_rail_fallback(data: dict) -> None:
+    """RAIL_* 공통 키가 있고 KTXA_* 가 비어 있으면 RAIL 값으로 채운다."""
+    for shared, specific in _RAIL_SHARED_MAP:
+        if not (data.get(specific) or "").strip() and (data.get(shared) or "").strip():
+            data[specific] = data[shared]
+
+
 def load_config() -> KTXAConfig:
     _load_env_files()
     data = {k: os.environ.get(k, "") for k in os.environ}
+    _apply_rail_fallback(data)
     try:
         return KTXAConfig.model_validate(data)
     except ValidationError as e:

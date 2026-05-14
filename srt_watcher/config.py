@@ -186,9 +186,29 @@ class SRTConfig(BaseModel):
         return utils.SEOUL_TZ
 
 
+_RAIL_SHARED_MAP = (
+    ("RAIL_ORIGIN", "SRT_ORIGIN"),
+    ("RAIL_DEST", "SRT_DEST"),
+    ("RAIL_DATE", "SRT_DATE"),
+    ("RAIL_TIMES", "SRT_TIMES"),
+    ("RAIL_TIME_WINDOW", "SRT_TIME_WINDOW"),
+    ("RAIL_PASSENGERS", "SRT_PASSENGERS"),
+    ("RAIL_SEAT_CLASS", "SRT_SEAT_CLASS"),
+    ("RAIL_TOLERANCE_MIN", "SRT_TOLERANCE_MIN"),
+)
+
+
+def _apply_rail_fallback(data: Dict[str, str]) -> None:
+    """RAIL_* 공통 키가 있고 SRT_* 가 비어 있으면 RAIL 값으로 채운다."""
+    for shared, specific in _RAIL_SHARED_MAP:
+        if not (data.get(specific) or "").strip() and (data.get(shared) or "").strip():
+            data[specific] = data[shared]
+
+
 def load_config() -> SRTConfig:
     _load_env_files()
     data: Dict[str, str] = {key: os.environ.get(key, "") for key in os.environ}
+    _apply_rail_fallback(data)
     try:
         config = SRTConfig.model_validate(data)
     except ValidationError as exc:
