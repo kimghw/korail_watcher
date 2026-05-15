@@ -35,3 +35,6 @@ runs/
 
 # 인증 DB (OAuth 토큰 등 비밀 포함)
 *.db
+
+# Claude Code 로컬 설정 (개인 권한/환경)
+.claude/settings.local.json

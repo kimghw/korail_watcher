@@ -9,44 +9,60 @@ description: KTX/SRT 통합 예매 워크플로우. 사용자가 기차 예매 �
 
 ---
 
-## 사전 조건 — 동작 환경 (시작 전 반드시 확인)
+## ⚠ 사전 조건 — 동작 환경 (시작 전 반드시 확인)
 
-이 스킬은 **`https://github.com/kimghw/korail_watcher.git` 을 clone 받은 디렉토리에서만 동작**한다.
-다른 위치에서는 `ktx_watcher` / `srt_watcher` / `team_mcp` 모듈이 없어 4·8단계 실행이 실패하며, 이 스킬을 호출해도 의미 있는 결과를 줄 수 없다.
+**이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 clone 받은 디렉토리 안에서만 동작한다.**
+그 외 위치에서는 `ktx_watcher` / `srt_watcher` / `team_mcp` 모듈이 없어 4·8단계가 무조건 실패하며,
+스킬이 묻는 질문에 답을 다 받아도 의미 있는 결과를 줄 수 없다 — 따라서 다른 위치에서는 **시작하지 않는다**.
 
-### 워크플로우 시작 전 점검 (1회)
+### 워크플로우 시작 전 점검 (필수, 1회)
 
-진행하기 전에 아래 둘 다 검증:
+다른 단계로 넘어가기 전 아래 둘 다 검증:
 
 1. **repo 매칭** — cwd 의 git remote 가 이 repo 인지 확인.
    ```bash
    git -C "<cwd>" remote get-url origin
-   # 기대값: https://github.com/kimghw/korail_watcher.git
+   # 기대값: https://github.com/kimghw/korail_watcher.git (혹은 SSH 변형)
    ```
-2. **필수 폴더 존재** — cwd 에 `ktx_watcher/`, `srt_watcher/`, `team_mcp/` 폴더가 있어야 함.
+2. **필수 폴더 존재** — cwd 에 `ktx_watcher/`, `srt_watcher/`, `team_mcp/` 세 폴더가 모두 있어야 함.
 
-둘 중 하나라도 실패하면 워크플로우 진입을 중단하고 사용자에게 다음을 한 번 안내한 뒤 사용자의 선택을 받는다:
+**둘 중 하나라도 실패 → 워크플로우 진입 중단.** 1·2단계로 넘어가지 말고 사용자에게 아래를 그대로 보여준다:
 
-> 이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 받아둔 디렉토리에서만 동작합니다.
-> 현재 위치: `<cwd>` — 필요한 모듈이 없습니다.
+> 이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 clone 받은 디렉토리에서만 동작합니다.
+> 현재 위치: `<cwd>` — 필수 모듈 (`ktx_watcher` / `srt_watcher` / `team_mcp`) 이 없어 진행할 수 없습니다.
 >
+> 해결:
 > - 처음이라면: `git clone https://github.com/kimghw/korail_watcher.git`
-> - 이미 받아두었지만 오래됐다면 해당 폴더에서: `git pull`
+> - 이미 clone 받아두었다면 해당 폴더로 이동 후 다시 호출
+> - 오래됐을 수 있으면 해당 폴더에서: `git pull` 후 재시도
 >
-> 받은 디렉토리에서 다시 시작해주세요.
+> 받은 디렉토리에서 이 스킬을 다시 호출해주세요.
 
-`AskUserQuestion` 옵션: `여기서 일단 진행` / `중단 — 올바른 디렉토리에서 다시 시작`.
+이 시점에서는 사용자에게 진행 옵션을 주지 않는다 (어차피 실행에서 실패하므로 "계속 진행" 은 false hope).
+사용자가 이미 자세한 여행 정보 (역/날짜/시간) 를 한 번에 입력한 상태라면, 그 입력은 응답 안에서만 메아리쳐 주고 `.env` 수정은 하지 않는다.
 
-### 실행 중 실패 분기 — 4단계 / 8단계 모듈 import 실패 시
+### 실행 중 실패 분기 — repo 위치/상태 의심 신호
 
-4 단계 `python -m ktx_watcher.main` 또는 8 단계 워처 기동에서 `ModuleNotFoundError: ktx_watcher` / `srt_watcher` / `team_mcp` 가 나오면, 스킬 잘못이 아니라 **위치 문제** 일 가능성이 크다.
+4 단계 (`python -m ktx_watcher.main` / `srt_watcher.main`) 또는 8 단계 워처 기동에서 아래 중 하나가 나오면, 스킬 로직 잘못이 아니라 **위치 또는 stale clone 문제** 일 가능성이 크다:
 
-이 경우 stdout/stderr 그대로 보여주고 한 줄 덧붙임:
+- `ModuleNotFoundError: No module named 'ktx_watcher'` (혹은 `srt_watcher` / `team_mcp` / `playwright` 등)
+- `python: No module named ktx_watcher.main` / `srt_watcher.main`
+- `FileNotFoundError` 가 repo 내부 path (`config/...`, `team_mcp/login.py` 등) 를 가리킬 때
+- import 는 되는데 새 환경변수/플래그 (`RAIL_*`, `KTXA_PAYMENT_MODE` 등) 가 무시되거나 `unknown option` 으로 거부될 때 → 코드가 오래됨
 
-> 위 에러는 보통 이 스킬이 `https://github.com/kimghw/korail_watcher.git` clone 디렉토리 밖에서 실행됐을 때 납니다.
-> 현재 cwd: `<cwd>`. clone 된 폴더로 이동 후 다시 시도해주세요.
+이 경우 stdout/stderr 그대로 보여주고 한 블록 덧붙임:
 
-그 외 정상 경로(모듈 import OK, 로그인/예매만 실패) 면 이 안내를 띄우지 않는다 — 진짜 문제를 가린다.
+> 위 에러는 보통 다음 둘 중 하나입니다:
+> 1. 이 스킬이 `https://github.com/kimghw/korail_watcher.git` clone 디렉토리 **밖** 에서 실행됨
+> 2. clone 받았지만 **버전이 오래되어** 새 모듈/플래그가 없음
+>
+> 현재 cwd: `<cwd>`.
+> 해결:
+> - 올바른 폴더로 이동했는지 확인
+> - 해당 폴더에서 `git pull` 후 재시도
+> - 그래도 안 되면 `git clone https://github.com/kimghw/korail_watcher.git` 로 새로 받기
+
+그 외 정상 경로(모듈 import OK, 로그인 또는 좌석 매진 같은 비즈니스 실패) 면 이 안내를 띄우지 않는다 — 진짜 문제를 가린다.
 
 ---
 
