@@ -5,7 +5,50 @@ description: KTX/SRT 통합 예매 워크플로우. 사용자가 기차 예매 �
 
 # korail — KTX / SRT 통합 예매 워크플로우
 
-사용자가 기차 예매를 시작하면 아래 순서대로 진행. 매 단계 결정을 받고 `c:\Users\kimghw\srt_watcher-main\.env` 를 in-place 수정. AZURE_*, DB_PATH 등 인프라 키는 절대 건드리지 않는다.
+사용자가 기차 예매를 시작하면 아래 순서대로 진행. 매 단계 결정을 받고 `c:\Users\kimghw\korail_watcher\.env` 를 in-place 수정. AZURE_*, DB_PATH 등 인프라 키는 절대 건드리지 않는다.
+
+---
+
+## 사전 조건 — 동작 환경 (시작 전 반드시 확인)
+
+이 스킬은 **`https://github.com/kimghw/korail_watcher.git` 을 clone 받은 디렉토리에서만 동작**한다.
+다른 위치에서는 `ktx_watcher` / `srt_watcher` / `team_mcp` 모듈이 없어 4·8단계 실행이 실패하며, 이 스킬을 호출해도 의미 있는 결과를 줄 수 없다.
+
+### 워크플로우 시작 전 점검 (1회)
+
+진행하기 전에 아래 둘 다 검증:
+
+1. **repo 매칭** — cwd 의 git remote 가 이 repo 인지 확인.
+   ```bash
+   git -C "<cwd>" remote get-url origin
+   # 기대값: https://github.com/kimghw/korail_watcher.git
+   ```
+2. **필수 폴더 존재** — cwd 에 `ktx_watcher/`, `srt_watcher/`, `team_mcp/` 폴더가 있어야 함.
+
+둘 중 하나라도 실패하면 워크플로우 진입을 중단하고 사용자에게 다음을 한 번 안내한 뒤 사용자의 선택을 받는다:
+
+> 이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 받아둔 디렉토리에서만 동작합니다.
+> 현재 위치: `<cwd>` — 필요한 모듈이 없습니다.
+>
+> - 처음이라면: `git clone https://github.com/kimghw/korail_watcher.git`
+> - 이미 받아두었지만 오래됐다면 해당 폴더에서: `git pull`
+>
+> 받은 디렉토리에서 다시 시작해주세요.
+
+`AskUserQuestion` 옵션: `여기서 일단 진행` / `중단 — 올바른 디렉토리에서 다시 시작`.
+
+### 실행 중 실패 분기 — 4단계 / 8단계 모듈 import 실패 시
+
+4 단계 `python -m ktx_watcher.main` 또는 8 단계 워처 기동에서 `ModuleNotFoundError: ktx_watcher` / `srt_watcher` / `team_mcp` 가 나오면, 스킬 잘못이 아니라 **위치 문제** 일 가능성이 크다.
+
+이 경우 stdout/stderr 그대로 보여주고 한 줄 덧붙임:
+
+> 위 에러는 보통 이 스킬이 `https://github.com/kimghw/korail_watcher.git` clone 디렉토리 밖에서 실행됐을 때 납니다.
+> 현재 cwd: `<cwd>`. clone 된 폴더로 이동 후 다시 시도해주세요.
+
+그 외 정상 경로(모듈 import OK, 로그인/예매만 실패) 면 이 안내를 띄우지 않는다 — 진짜 문제를 가린다.
+
+---
 
 ## 핵심 규칙
 - 사용자가 한 번에 여러 정보를 주면 (예: "5월 25일 경주→오송 13:38 KTX 1명 일반실") 해당 단계 skip.
