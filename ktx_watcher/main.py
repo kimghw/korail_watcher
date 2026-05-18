@@ -150,17 +150,18 @@ def main() -> int:
     config.ktxa_log_dir.mkdir(parents=True, exist_ok=True)
 
     times_str = ",".join(t.strftime("%H:%M") for t in config.ktxa_times)
+    seat_label = config.ktxa_seat_class or "일반실+특실"
     LOGGER.info(
         "Watcher booting: %s→%s on %s times=%s seat=%s train=%s mode=%s",
         config.ktxa_origin, config.ktxa_dest, config.ktxa_date, times_str,
-        config.ktxa_seat_class, config.ktxa_train_type, config.ktxa_mode,
+        seat_label, config.ktxa_train_type, config.ktxa_mode,
     )
 
     notifier = _build_teams_notifier(config)
     _notify(
         notifier,
         f"🚄 KTX 워처 부팅\n{config.ktxa_origin}→{config.ktxa_dest} {config.ktxa_date} "
-        f"times={times_str} seat={config.ktxa_seat_class} mode={config.ktxa_mode} "
+        f"times={times_str} seat={seat_label} mode={config.ktxa_mode} "
         f"payment={'on' if config.ktxa_payment_mode else 'off'}",
     )
 
@@ -205,6 +206,9 @@ def main() -> int:
                 except SiteLayoutChanged as e:
                     LOGGER.error("Site layout changed: %s", e)
                     return 1
+                except Exception as e:
+                    LOGGER.warning("iteration 일시 예외 (%s: %s) — backoff 후 재시도", type(e).__name__, e)
+                    _sleep_with_jitter(5.0, 12.0)
     finally:
         launcher.shutdown_if_owned()
 

@@ -116,11 +116,59 @@ Windows/WSL 혼용 환경에서 심볼릭 링크가 번거롭거나 동작하지
   - `.git/`, `.DS_Store`, `*.swp`, `*.tmp` — 잡파일.
 - **심볼릭 링크 처리**: 사전 조건 절차에서 로컬에 링크가 있으면 이미 중단되었으므로, 이 단계에 도달한 시점의 로컬은 순수 복사 트리임이 보장된다. 원본 `$TOOLKIT/.claude/` 쪽에 링크가 섞여 있으면 해당 파일은 복사 대신 **스킵**하고 그 사실을 리포트한다.
 
+## 원본 git 최신 상태 점검 (pull / push / diff 공통 선행)
+
+원본 탐지가 끝나면 실제 파일 비교·복사·커밋에 들어가기 **전에** `$TOOLKIT` 레포가 `origin/<branch>` 와 동기화돼 있는지 반드시 확인한다. 그렇지 않으면 `pull` 은 stale 한 버전을 로컬에 덮어쓰고, `push` 는 non-fast-forward 거절을 일으킬 수 있으며, `diff` 미리보기는 실제 비교 대상과 어긋난다.
+
+이 점검은 `help` 에서만 스킵한다. `pull`/`push`/`diff`/인자 없음 모두에 선행한다.
+
+### 절차
+
+1. **`git -C "$TOOLKIT" fetch --quiet`** 실행.
+   - 네트워크/인증 실패 시 경고만 출력하고 다음 단계로 진행(오프라인 작업 허용). 단, push 모드에서는 "fetch 실패 — 원격 최신 상태 미확인, push 시 non-fast-forward 가능" 경고를 추가로 표시.
+
+2. **상태 분류**:
+   ```
+   LOCAL=$(git -C "$TOOLKIT" rev-parse @)
+   REMOTE=$(git -C "$TOOLKIT" rev-parse @{u} 2>/dev/null) || REMOTE=""
+   BASE=$(git -C "$TOOLKIT" merge-base @ @{u} 2>/dev/null) || BASE=""
+   AHEAD=$(git -C "$TOOLKIT"  rev-list --count @{u}..@ 2>/dev/null || echo 0)
+   BEHIND=$(git -C "$TOOLKIT" rev-list --count @..@{u} 2>/dev/null || echo 0)
+   ```
+   - upstream 미설정(`@{u}` 조회 실패) → 경고만 표시 후 진행: `"원본의 현재 브랜치에 upstream 이 없습니다 — 원격 비교 생략"`.
+   - `$LOCAL == $REMOTE` → **up-to-date**.
+   - `BEHIND>0 && AHEAD==0` → **behind N**.
+   - `AHEAD>0 && BEHIND==0` → **ahead N**.
+   - `AHEAD>0 && BEHIND>0` → **diverged**.
+
+3. **상태별 분기**:
+   - **up-to-date** → 그대로 진행.
+   - **behind N** (원격이 앞섬):
+     - `AskUserQuestion` 으로 처리 방식 선택:
+       1. `git pull --ff-only` 자동 실행 후 진행 (Recommended)
+       2. 동기화 없이 그대로 진행 (stale 버전으로 작업)
+       3. 중단
+     - 1번 선택 시: `git -C "$TOOLKIT" status --porcelain` 으로 working tree 가 dirty 인지 먼저 확인. dirty 면 `"working tree dirty — pull --ff-only 불가. 먼저 커밋/스태시 후 재시도"` 출력하고 중단. clean 이면 `git -C "$TOOLKIT" pull --ff-only` 실행, 실패 시 중단.
+   - **ahead N** (원본에 미푸시 커밋 있음):
+     - 경고만 표시하고 진행: `"$TOOLKIT 는 origin 보다 N 커밋 앞섬 — push 모드 진입 시 누적 커밋이 함께 푸시됩니다"`.
+   - **diverged** (양쪽 갈라짐):
+     - **중단**. 다음 메시지 출력:
+       > 원본 `$TOOLKIT` 가 origin 과 갈라졌습니다(ahead=A, behind=B). 자동 처리 불가 — 직접 해결 후 재시도하세요:
+       > - `git -C "$TOOLKIT" pull --rebase` (로컬 커밋을 원격 위로 재배치) 또는
+       > - `git -C "$TOOLKIT" merge origin/<branch>` (병합 커밋 생성).
+
+4. **결과 보고 한 줄**:
+   ```
+   [origin sync] $TOOLKIT  HEAD <shortsha>  (up-to-date | behind N | ahead N | diverged A/B | no-upstream | fetch-failed)
+   ```
+
+이 점검을 통과한 뒤에야 각 인자별 동작의 dirty 검사·파일 복사·커밋이 수행된다.
+
 ## 인자별 동작
 
 ### 0. `help` / `-h` / `--help` — 인자 도움말
 
-- 본 명령이 받는 인자(인자 없음=`diff`, `pull`, `push [<filepath>...] [--allow-dirty-origin]`, `diff`)와 각 동작 설명만 요약 출력하고 종료. 원본 탐지·파일 복사·git 작업 전부 수행하지 않는다.
+- 본 명령이 받는 인자(인자 없음=`diff`, `pull`, `push [<filepath>...] [--allow-dirty-origin]`, `diff`)와 각 동작 설명만 요약 출력하고 종료. 원본 탐지·**origin sync 점검**·파일 복사·git 작업 전부 수행하지 않는다.
 
 ### 1. `pull` — 원본 → 로컬, **교집합만**
 

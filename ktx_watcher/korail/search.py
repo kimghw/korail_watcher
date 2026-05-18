@@ -455,35 +455,42 @@ def perform_search(
                 raw = []
 
     # 사용자 선호 시간/좌석 매칭 후보로 압축
+    # KTXA_SEAT_CLASS 가 비어 있으면 일반실+특실 둘 다 후보로 만든다 (ANY).
+    seat_pref = (config.ktxa_seat_class or "").strip()
+    want_general = (not seat_pref) or ("일반실" in seat_pref)
+    want_special = (not seat_pref) or ("특실" in seat_pref)
     candidates: List[Dict[str, Any]] = []
     for r in raw:
         if not _is_candidate_time(r["depart_time"], config):
             continue
-        status_col = r["first_status"] if "특실" in config.ktxa_seat_class else r["general_status"]
         # 실측 (2026-05-14): row 텍스트의 일반실/특실 직후 30자가 status.
         #   예약 가능: "23,700원5%적립..." (가격 표시)
         #   매진:     "23,700원5%적립매진"
         #   매진임박: "(매진임박)23,700원..." (예약 가능)
-        status_window = status_col[:40].replace(" ", "")
-        # "매진임박" 만 제외하고 남은 "매진" 이 있으면 매진 상태
-        without_imminent = status_window.replace("매진임박", "")
-        if "매진" in without_imminent:
-            continue
-        # 가격 표시(원) 또는 명시적 예약 키워드가 없으면 예약 불가
-        if not any(ok in status_window for ok in ("원", "예약하기", "좌석선택", "예매", "입석")):
-            continue
-        candidates.append({
-            "origin": config.ktxa_origin,
-            "dest": config.ktxa_dest,
-            "date": config.ktxa_date.isoformat(),
-            "depart": r["depart"],
-            "depart_time": r["depart_time"],
-            "train_name": r["train_name"],
-            "seat_class": config.ktxa_seat_class,
-            "status": status_col,
-            "_row_index": r["_row_index"],
-            "_raw": r["depart_raw"],
-        })
+        for seat_label, status_col, enabled in (
+            ("일반실", r.get("general_status", ""), want_general),
+            ("특실", r.get("first_status", ""), want_special),
+        ):
+            if not enabled or not status_col:
+                continue
+            status_window = status_col[:40].replace(" ", "")
+            without_imminent = status_window.replace("매진임박", "")
+            if "매진" in without_imminent:
+                continue
+            if not any(ok in status_window for ok in ("원", "예약하기", "좌석선택", "예매", "입석")):
+                continue
+            candidates.append({
+                "origin": config.ktxa_origin,
+                "dest": config.ktxa_dest,
+                "date": config.ktxa_date.isoformat(),
+                "depart": r["depart"],
+                "depart_time": r["depart_time"],
+                "train_name": r["train_name"],
+                "seat_class": seat_label,
+                "status": status_col,
+                "_row_index": r["_row_index"],
+                "_raw": r["depart_raw"],
+            })
     candidates.sort(key=lambda c: c["depart_time"])
     LOGGER.info("후보 %d건 (전체 row %d건)", len(candidates), len(raw))
     return candidates

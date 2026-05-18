@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 
-ENV_FILES = (Path("env") / ".env", Path(".env"))
+ENV_FILES = (Path(".env.ktx"), Path("env") / ".env", Path(".env"))
 
 
 class ConfigError(RuntimeError):
@@ -49,7 +49,7 @@ class KTXAConfig(BaseModel):
     ktxa_date: date = Field(alias="KTXA_DATE")
     ktxa_times: List[time] = Field(alias="KTXA_TIMES")
     ktxa_passengers: int = Field(1, alias="KTXA_PASSENGERS")
-    ktxa_seat_class: str = Field("일반실", alias="KTXA_SEAT_CLASS")
+    ktxa_seat_class: str = Field("", alias="KTXA_SEAT_CLASS")
     ktxa_train_type: str = Field("KTX", alias="KTXA_TRAIN_TYPE")
     ktxa_tolerance_min: int = Field(0, alias="KTXA_TOLERANCE_MIN")
     ktxa_time_window: Optional[Tuple[time, time]] = Field(
@@ -154,12 +154,17 @@ class KTXAConfig(BaseModel):
     def _upper(cls, v):
         return v.upper()
 
-    @field_validator("ktxa_origin", "ktxa_dest", "ktxa_seat_class", "ktxa_train_type", mode="after")
+    @field_validator("ktxa_origin", "ktxa_dest", "ktxa_train_type", mode="after")
     @classmethod
     def _non_empty(cls, v):
         if not v or not v.strip():
             raise ValueError("required value cannot be empty")
         return v.strip()
+
+    @field_validator("ktxa_seat_class", mode="after")
+    @classmethod
+    def _seat_class_opt(cls, v):
+        return (v or "").strip()
 
     @field_validator("ktxa_user", "ktxa_pass", mode="after")
     @classmethod

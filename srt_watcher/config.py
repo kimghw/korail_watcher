@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from . import utils
 
 ENV_FILES = (
+    Path(".env.srt"),
     Path("env") / ".env",
     Path(".env"),
 )
