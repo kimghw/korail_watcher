@@ -32,8 +32,6 @@ Thumbs.db
 runs/
 
 .env
-.env.ktx
-.env.srt
 
 # 인증 DB (OAuth 토큰 등 비밀 포함)
 *.db
