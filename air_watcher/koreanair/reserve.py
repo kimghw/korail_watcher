@@ -581,9 +581,18 @@ def _set_airport(page, side: str, iata: str) -> None:
 
 
 def _is_date_picker_open(page) -> bool:
+    """DOM 에 cell 만 있어도 0×0 면 닫힌 것 → 적어도 하나가 visible 한지 확인."""
     try:
-        return bool(page.evaluate(
-            "document.querySelectorAll('.ui-datepicker__td-date').length > 0"))
+        return bool(page.evaluate("(() => { " + _JS_WALK + r"""
+          const a=[]; _walk(document, 0, a);
+          for (const el of a) {
+            if (el.tagName !== 'SPAN') continue;
+            if (!(el.className||'').toString().includes('ui-datepicker__td-date')) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width > 0 && r.height > 0) return true;
+          }
+          return false;
+        })()"""))
     except Exception:
         return False
 
@@ -605,14 +614,21 @@ def _depart_date_matches(page, target: _date_cls) -> bool:
     if not info:
         return False
     t = info.get("t") or ""
-    # KE 버튼 텍스트 패턴 후보 — 어느 하나라도 들어 있으면 매치로 판정
-    needles = [
-        f"{target.month}월 {target.day}일",
-        f"{target.month:02d}.{target.day:02d}",
-        f"{target.month:02d}-{target.day:02d}",
-        f"{target.year}-{target.month:02d}-{target.day:02d}",
-    ]
-    return any(p in t for p in needles)
+    # KE 위젯은 "05월 29일 (금)" / "5월 29일" / "05.29" 등 표기가 다양 — 정규식으로
+    # month·day 숫자만 추출해서 비교.
+    import re as _re
+    m = _re.search(r"(\d{1,2})\s*월\s*(\d{1,2})\s*일", t)
+    if m:
+        return int(m.group(1)) == target.month and int(m.group(2)) == target.day
+    m = _re.search(r"(\d{1,2})[.\-/](\d{1,2})", t)
+    if m:
+        return int(m.group(1)) == target.month and int(m.group(2)) == target.day
+    m = _re.search(r"(\d{4})-(\d{2})-(\d{2})", t)
+    if m:
+        return (int(m.group(1)) == target.year
+                and int(m.group(2)) == target.month
+                and int(m.group(3)) == target.day)
+    return False
 
 
 def _locate_day_cell(page, year: int, month: int, day: int) -> Optional[Dict]:
@@ -708,6 +724,234 @@ def _date_dialog_buttons(page):
         return None
 
 
+def _ensure_fare_type(page, fare_type: str) -> None:
+    """홈 위젯의 cash/miles 탭 전환. chip-X 에 fare-type 가 없으므로 텍스트 매칭 button/link
+    을 찾아 클릭한다 — '일반 예매' (cash) / '마일리지 예매' (miles).
+
+    fare_type='both' 면 별도 처리 안 함.
+    """
+    if fare_type not in ("cash", "miles"):
+        return
+    # 홈 위젯 fare 탭 = KDS-SWITCH (`label-start='예매'`, `label-end='마일리지 예매'`).
+    # 검증된 매핑 (URL 결과 기준): is-checked='true' → "예매"(cash) / 'false' → "마일리지 예매"(miles).
+    want_checked = "true" if fare_type == "cash" else "false"
+    for attempt in range(4):
+        info = page.evaluate(
+            "(() => { " + _JS_WALK + r"""
+              const a=[]; _walk(document, 0, a);
+              for (const el of a) {
+                if (el.tagName !== 'KDS-SWITCH') continue;
+                if ((el.getAttribute('label-start') || '') !== '예매') continue;
+                const r = el.getBoundingClientRect();
+                if (r.width < 50) continue;
+                // 내부 KDS-SWITCH_1 (실제 toggle host) 에서 is-checked 읽기
+                let host = null;
+                for (const c of el.querySelectorAll('*')) {
+                  if (c.tagName === 'KDS-SWITCH_1') { host = c; break; }
+                }
+                const checked = host ? host.getAttribute('is-checked') : null;
+                // start/end SPAN 좌표
+                let startX = r.x + r.width * 0.25;
+                let endX   = r.x + r.width * 0.75;
+                for (const c of el.querySelectorAll('span')) {
+                  const t = (c.innerText || '').trim();
+                  const cr = c.getBoundingClientRect();
+                  if (t === '예매') startX = cr.x + cr.width / 2;
+                  if (t === '마일리지 예매') endX = cr.x + cr.width / 2;
+                }
+                return {checked, startX, endX, y: r.y + r.height / 2, w: r.width};
+              }
+              return null;
+            })()"""
+        )
+        LOGGER.info("warm-up: fare switch info = %s", info)
+        if not info:
+            _time.sleep(0.6); continue
+        if info.get("checked") == want_checked:
+            # 토글 직후 KE 가 navigation/페이지 갱신을 트리거할 수 있어 안정화 대기.
+            try:
+                page.wait_for_load_state("domcontentloaded", timeout=8_000)
+            except Exception:
+                pass
+            _time.sleep(2.0)
+            return
+        target_x = info["startX"] if fare_type == "cash" else info["endX"]
+        try:
+            page.mouse.click(target_x, info["y"])
+        except Exception as e:
+            LOGGER.debug("fare switch click err: %s", e)
+        _time.sleep(1.0)
+    LOGGER.warning(
+        "warm-up: fare switch 토글 실패 (현재 = %s, 원함 is-checked=%s) — 기본값으로 진행",
+        info if info else "?", want_checked,
+    )
+    return  # 이하 레거시 경로는 사용 안 함
+    # 두 키워드의 우선 순위 — 'cash' 면 '일반' 포함하되 '마일리지' 포함 안 함, 반대 동일.
+    want_kw = "예매" if fare_type == "cash" else "마일리지"
+    avoid_kw = "마일리지" if fare_type == "cash" else ""
+    for attempt in range(3):
+        info = page.evaluate(
+            "([want, avoid]) => { " + _JS_WALK + r"""
+              const a=[]; _walk(document, 0, a);
+              // 후보: button / a / [role=tab] 중 텍스트 매칭
+              const cands = [];
+              for (const el of a) {
+                const tag = el.tagName;
+                const role = el.getAttribute ? (el.getAttribute('role') || '') : '';
+                if (tag !== 'BUTTON' && tag !== 'A' && role !== 'tab') continue;
+                const t = (el.innerText||'').replace(/\s+/g,' ').trim();
+                if (!t || t.length > 30) continue;
+                if (!t.includes(want)) continue;
+                if (avoid && t.includes(avoid)) continue;
+                const r = el.getBoundingClientRect();
+                if (r.width <= 0 || r.height <= 0) continue;
+                // 페이지 상단(헤더 nav 위) 의 것 — '예매' 키워드 들어가야
+                cands.push({el, t, x: r.x + r.width/2, y: r.y + r.height/2,
+                            ariaSel: el.getAttribute ? el.getAttribute('aria-selected') : null,
+                            cls: (el.className||'').toString().slice(0, 50)});
+              }
+              if (!cands.length) return null;
+              // 가장 윗쪽 (y 최소) 것이 fare-type 탭일 가능성 큼
+              cands.sort((a, b) => a.y - b.y);
+              const c = cands[0];
+              return {t: c.t, x: c.x, y: c.y, ariaSel: c.ariaSel, cls: c.cls};
+            }""",
+            [want_kw, avoid_kw],
+        )
+        LOGGER.info("warm-up: fare tab info = %s", info)
+        if not info:
+            _time.sleep(0.8); continue
+        # 이미 선택돼 있으면(aria-selected=true) skip
+        if info.get("ariaSel") == "true":
+            return
+        page.mouse.click(info["x"], info["y"])
+        _time.sleep(1.5)
+        # 페이지 reload 됐을 수도 있어 chip-2 가 다시 나타날 때까지 대기
+        deadline = _time.time() + 8.0
+        while _time.time() < deadline:
+            try:
+                if page.evaluate("!!document.querySelector(\"input[id='chip-2']\")"):
+                    break
+            except Exception:
+                pass
+            _time.sleep(0.3)
+        return
+    # 탭 못 찾으면 — 홈 페이지에 visible 한 fare-type 탭이 없는 경우. 검색 결과 페이지에서
+    # 확인. 기본값(보통 cash) 으로 진행.
+    LOGGER.warning("warm-up: fare_type=%s 탭 못 찾음 — 기본값으로 진행", fare_type)
+
+
+def _ensure_oneway_in_picker(page) -> None:
+    """picker 안의 '편도' ui-switch 탭이 -selected 가 아니면 클릭해서 oneway 모드로 전환.
+
+    picker 의 ui-switch 가 진짜 trip-type 컨트롤. chip-X 는 hidden radio 라 click 해도
+    시각/세션 상태엔 반영 안 됨. picker 가 열려야만 ui-switch 가 보임.
+    """
+    for attempt in range(3):
+        info = page.evaluate("(() => { " + _JS_WALK + r"""
+          const a=[]; _walk(document, 0, a);
+          // 'ui-switch' 클래스를 가진 button 들을 위치 순으로 수집 (왕복=0번, 편도=1번)
+          const switches = [];
+          for (const el of a) {
+            if (el.tagName !== 'BUTTON') continue;
+            const cls = (el.className||'').toString();
+            if (!/(^|\s)ui-switch(\s|$|-)/.test(cls)) continue;
+            const r = el.getBoundingClientRect();
+            if (r.width <= 0 || r.height <= 0) continue;
+            switches.push({el, x: r.x, y: r.y, w: r.width, h: r.height,
+                           selected: cls.includes('-selected')});
+          }
+          switches.sort((a, b) => a.x - b.x);
+          // 편도 = 두 번째 ui-switch (왕복이 첫 번째). 가독성을 위해 picker-row 의 ui-switch 만.
+          if (switches.length < 2) return {found: false, count: switches.length};
+          const oneway = switches[1];
+          if (oneway.selected) return {found: true, already: true};
+          return {found: true, already: false,
+                  x: oneway.x + oneway.w/2, y: oneway.y + oneway.h/2};
+        })()""")
+        LOGGER.info("warm-up: picker oneway switch info = %s", info)
+        if not info or not info.get("found"):
+            _time.sleep(1.0); continue
+        if info.get("already"):
+            return
+        page.mouse.click(info["x"], info["y"])
+        _time.sleep(1.2)
+        # picker 가 재렌더 / 닫힐 수도 있음. 닫혔으면 다시 열기.
+        if not _is_date_picker_open(page):
+            _open_date_picker(page)
+            _time.sleep(1.0)
+    raise LoginError("warm-up: picker 안 '편도' 탭 활성화 실패")
+
+
+def _close_picker_via_close_button(page) -> None:
+    """picker overlay 의 X close 버튼을 찾아 클릭. 못 찾으면 viewport 우상단 안전지대 click.
+
+    Escape 는 selection 을 discard 시키므로 절대 호출하지 않는다.
+    """
+    if not _is_date_picker_open(page):
+        return
+    closed = False
+    try:
+        info = page.evaluate("(() => { " + _JS_WALK + r"""
+          const a=[]; _walk(document, 0, a);
+          // .ui-datepicker 가 들어있는 popover 컨테이너 → 그 안의 close 류 button 찾기
+          let host = null;
+          for (const el of a) {
+            const cls = (el.className||'').toString();
+            if (cls.includes('ui-datepicker') && el.parentElement) {
+              // popover 컨테이너로 거슬러 올라가기 (보통 2~5 레벨)
+              let p = el;
+              for (let i=0; i<6; i++) {
+                if (!p) break;
+                const pcls = (p.className||'').toString();
+                if (pcls.match(/popover|modal|dialog|layer|overlay/i)) { host = p; break; }
+                p = p.parentElement;
+              }
+              if (host) break;
+            }
+          }
+          // host 못 찾으면 .ui-datepicker 자체 element
+          if (!host) {
+            for (const el of a) {
+              if ((el.className||'').toString().match(/ui-datepicker(?!__)/)) { host = el; break; }
+            }
+          }
+          if (!host) return null;
+          // host 안에서 'close' 류 button 찾기
+          const btns = host.querySelectorAll('button');
+          for (const b of btns) {
+            const t = (b.innerText||'').trim();
+            const aria = (b.getAttribute('aria-label') || '').trim();
+            const cls = (b.className||'').toString();
+            if (/닫기|close/i.test(aria + ' ' + cls) || t === 'X' || t === '×') {
+              const r = b.getBoundingClientRect();
+              if (r.width > 0 && r.height > 0) {
+                return {x: r.x + r.width/2, y: r.y + r.height/2,
+                        aria, t, cls: cls.slice(0, 60)};
+              }
+            }
+          }
+          return null;
+        })()""")
+        if info:
+            LOGGER.debug("warm-up: picker close btn=%s", info)
+            page.mouse.click(info["x"], info["y"])
+            _time.sleep(1.0)
+            closed = not _is_date_picker_open(page)
+    except Exception as e:
+        LOGGER.debug("close button find err: %s", e)
+    if not closed and _is_date_picker_open(page):
+        # X 못 찾았으면 viewport 우상단 안전지대 click (header navigation 회피)
+        try:
+            page.mouse.click(1900, 50)
+        except Exception:
+            try:
+                page.mouse.click(20, 20)
+            except Exception:
+                pass
+        _time.sleep(1.0)
+
+
 def _close_date_dialog(page) -> None:
     """date picker 의 확인/적용/완료/선택 류 버튼 클릭 → 안 닫히면 Escape → 외부 click.
 
@@ -753,85 +997,112 @@ def _close_date_dialog(page) -> None:
 
 
 def _set_depart_date(page, target: _date_cls) -> None:
-    if _depart_date_matches(page, target):
-        return
+    """date picker 를 열고 oneway 탭 + day cell 선택. picker 는 '항공편 검색' 클릭 시점에
+    commit 되므로 widget button 텍스트로 검증하지 않고 cell 의 -start 클래스로만 확인."""
     _open_date_picker(page)
-    _time.sleep(1.5)  # picker hydration 추가 대기
-    # picker 열린 직후 상태 진단 — TD/SPAN 카운트와 첫 td 의 bounding rect
-    try:
-        diag = page.evaluate("(() => { " + _JS_WALK + r"""
-          const a=[]; _walk(document, 0, a);
-          const spans = a.filter(e => e.tagName === 'SPAN'
-              && (e.className||'').toString().includes('ui-datepicker__td-date'));
-          let first = null;
-          if (spans.length) {
-            const s = spans[0];
-            const r = s.getBoundingClientRect();
-            first = {text: (s.innerText||'').trim(), x: r.x, y: r.y, w: r.width, h: r.height};
-          }
-          return {span_count: spans.length, first_span: first, url: location.href};
-        })()""")
-        LOGGER.info("warm-up: date picker DOM diag = %s", diag)
-    except Exception as e:
-        LOGGER.debug("date picker diag err: %s", e)
-    try:
-        page.screenshot(path="runs/warmup_date_picker_state.png", full_page=False)
-    except Exception:
-        pass
+    _time.sleep(1.5)  # picker hydration
+    _ensure_oneway_in_picker(page)
     for attempt in range(4):
         r = _pick_day_in_month(page, target.year, target.month, target.day)
         LOGGER.info("warm-up: date click attempt %d -> %s", attempt, r)
-        _time.sleep(1.5)
-        # 첫 -start 잡힌 시점에 스크린샷 + 버튼 dump (진단용)
+        _time.sleep(1.2)
         if isinstance(r, dict) and "-start" in (r.get("cls") or ""):
-            if attempt <= 1:
-                try:
-                    page.screenshot(path=f"runs/warmup_date_open_a{attempt}.png", full_page=False)
-                except Exception:
-                    pass
-                btns = _date_dialog_buttons(page)
-                LOGGER.info("warm-up: date dialog buttons (open) = %s", btns)
-            _close_date_dialog(page)
-        if _depart_date_matches(page, target):
+            LOGGER.info("warm-up: date cell %s 선택 (picker 내부 state) — 검색 클릭 시 commit",
+                        target.isoformat())
             return
         if not _is_date_picker_open(page):
             _open_date_picker(page)
+            _ensure_oneway_in_picker(page)
     try:
         page.screenshot(path="runs/warmup_date_fail.png", full_page=False)
     except Exception:
         pass
-    cur = (_widget_button(page, "date") or {}).get("t")
     raise LoginError(
-        f"warm-up: 출발일 {target.isoformat()} 선택 실패 (현재='{cur}', "
+        f"warm-up: 출발일 {target.isoformat()} cell 선택 실패 (-start 클래스 미반영, "
         f"스크린샷=runs/warmup_date_fail.png)"
     )
 
 
 def _find_search_button(page) -> Optional[Dict]:
+    """'항공편 검색' button 위치. picker 가 열려 있으면 CTA 가 innerText 비어있을 수 있어
+    aria-label / class 로 fallback."""
     return page.evaluate("(() => { " + _JS_WALK + r"""
       const a=[]; _walk(document, 0, a);
+      // 1. text === '항공편 검색'
       for (const el of a) {
         if (el.tagName !== 'BUTTON') continue;
         if ((el.innerText||'').trim() !== '항공편 검색') continue;
         const r = el.getBoundingClientRect();
-        return {x: r.x + r.width/2, y: r.y + r.height/2,
+        if (r.width <= 0 || r.height <= 0) continue;
+        return {via: 'text', x: r.x + r.width/2, y: r.y + r.height/2,
+                disabled: !!el.disabled, w: r.width};
+      }
+      // 2. aria-label 에 '항공편 검색'
+      for (const el of a) {
+        if (el.tagName !== 'BUTTON') continue;
+        const aria = el.getAttribute('aria-label') || '';
+        if (!aria.includes('항공편 검색')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        return {via: 'aria', x: r.x + r.width/2, y: r.y + r.height/2,
+                disabled: !!el.disabled, w: r.width};
+      }
+      // 3. picker 영역의 CTA: ui-button -basic -cta 클래스. picker booking-tool row 와
+      // 같은 y(±30) 의 button 중 cta 클래스.
+      let toolY = null;
+      for (const el of a) {
+        if (el.tagName !== 'BUTTON') continue;
+        const cls = (el.className||'').toString();
+        if (!cls.includes('ui-booking-tool__button')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width > 0 && r.height > 0) { toolY = r.y; break; }
+      }
+      if (toolY === null) return null;
+      for (const el of a) {
+        if (el.tagName !== 'BUTTON') continue;
+        const cls = (el.className||'').toString();
+        if (!cls.includes('ui-button') || !cls.includes('-cta')) continue;
+        const r = el.getBoundingClientRect();
+        if (r.width <= 0 || r.height <= 0) continue;
+        if (Math.abs(r.y - toolY) > 30) continue;
+        return {via: 'cta', x: r.x + r.width/2, y: r.y + r.height/2,
                 disabled: !!el.disabled, w: r.width};
       }
       return null;
     })()""")
 
 
-def _wait_select_flight(page, timeout_s: float = 25.0) -> None:
+def _wait_select_flight(page, cfg: AirConfig, timeout_s: float = 25.0) -> None:
+    """cash → /booking/select-flight, miles → /booking/select-award-flight 진입 대기.
+
+    page.url 외에도 JS `location.href` 와 context 의 다른 page 도 확인 — KE 가 새 탭/iframe
+    으로 결과를 띄울 가능성 대비.
+    """
+    want_paths = ["/booking/select-flight", "/booking/select-award-flight"]
+    primary = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
+               else "/booking/select-flight")
+    ctx = page.context
     deadline = _time.time() + timeout_s
     while _time.time() < deadline:
-        url = page.url or ""
-        if "/booking/select-flight" in url:
-            # 추가로 flight-list DOM hydration 잠깐 대기 (안 잡혀도 진행)
+        try:
+            js_url = page.evaluate("location.href")
+        except Exception:
+            js_url = None
+        page_url = page.url or ""
+        all_urls = [p.url for p in (ctx.pages if ctx else [])]
+        if any(p in (js_url or "") for p in want_paths) \
+                or any(p in page_url for p in want_paths) \
+                or any(any(p in u for p in want_paths) for u in all_urls):
+            actual = js_url or page_url
+            if primary not in actual and primary not in ",".join(all_urls):
+                LOGGER.warning("warm-up: 의도된 fare_type=%s(%s) 가 아닌 페이지 진입 — actual=%s, ctx_pages=%s",
+                               cfg.air_fare_type, primary, actual, all_urls)
+            # flight-list DOM 잠깐 대기
             for _ in range(20):
                 try:
                     if page.evaluate(
                         "!!document.querySelector('[class*=flight-list], "
-                        "[class*=FlightList], [data-testid*=flight]')"
+                        "[class*=FlightList], [data-testid*=flight], [class*=flight-card]')"
                     ):
                         return
                 except Exception:
@@ -839,7 +1110,10 @@ def _wait_select_flight(page, timeout_s: float = 25.0) -> None:
                 _time.sleep(0.5)
             return
         _time.sleep(0.5)
-    raise LoginError(f"warm-up: select-flight 진입 실패 (url={page.url!r})")
+    raise LoginError(
+        f"warm-up: select-flight 진입 실패 "
+        f"(page.url={page_url!r}, js_url={js_url!r}, ctx_pages={all_urls})"
+    )
 
 
 def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
@@ -864,7 +1138,9 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
 
     url = page.url or ""
     depart_str = cfg.air_depart_date.strftime("%Y%m%d")
-    if ("/booking/select-flight" in url
+    want_path = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
+                 else "/booking/select-flight")
+    if (want_path in url
             and f"origin={cfg.air_origin}" in url
             and f"destination={cfg.air_dest}" in url
             and f"departureDate={depart_str}" in url):
@@ -874,8 +1150,34 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
     LOGGER.info("warm-up: 홈 위젯 진입")
     _ensure_home(page)
 
-    LOGGER.info("warm-up: trip_type=%s", cfg.air_trip_type)
-    _ensure_trip_type(page, cfg.air_trip_type)
+    # 홈 위젯의 chip-X 인풋들을 dump 해서 어느 게 cash/miles 인지 식별 (진단용)
+    try:
+        chips = page.evaluate("(() => { " + _JS_WALK + r"""
+          const a=[]; _walk(document, 0, a);
+          const out = [];
+          for (const el of a) {
+            if (el.tagName !== 'INPUT') continue;
+            const id = el.id || '';
+            if (!/^chip-\d+$/.test(id)) continue;
+            const lbl = document.querySelector(`label[for='${id}']`);
+            out.push({
+              id, type: el.type, checked: el.checked,
+              label: lbl ? (lbl.innerText||'').replace(/\s+/g,' ').trim().slice(0,30) : null,
+            });
+          }
+          return out;
+        })()""")
+        LOGGER.info("warm-up: chip inputs = %s", chips)
+    except Exception as e:
+        LOGGER.debug("chip dump err: %s", e)
+
+    # cash/miles 탭 전환 — label 텍스트로 식별
+    LOGGER.info("warm-up: fare_type=%s", cfg.air_fare_type)
+    _ensure_fare_type(page, cfg.air_fare_type)
+
+    # 참고: chip-X 인풋은 hidden radio 라 click 해도 시각/세션 상태에 반영 안 됨.
+    # 실제 trip-type 컨트롤은 date picker 가 열렸을 때 보이는 ui-switch 탭이다.
+    # _set_depart_date 안에서 _ensure_oneway_in_picker 로 처리한다.
 
     LOGGER.info("warm-up: origin=%s", cfg.air_origin)
     _set_airport(page, "origin", cfg.air_origin)
@@ -888,13 +1190,25 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
 
     LOGGER.info("warm-up: '항공편 검색' 클릭")
     sb = _find_search_button(page)
+    LOGGER.info("warm-up: search btn = %s", sb)
     if not sb:
-        raise LoginError("warm-up: '항공편 검색' button 못 찾음")
+        try:
+            page.screenshot(path="runs/warmup_no_search_btn.png", full_page=False)
+        except Exception:
+            pass
+        raise LoginError("warm-up: '항공편 검색' button 못 찾음 (스크린샷=runs/warmup_no_search_btn.png)")
     if sb.get("disabled"):
         LOGGER.warning("warm-up: 검색 버튼 disabled — 그대로 클릭 시도")
     page.mouse.click(sb["x"], sb["y"])
 
-    _wait_select_flight(page)
+    try:
+        _wait_select_flight(page, cfg)
+    except LoginError:
+        try:
+            page.screenshot(path="runs/warmup_no_navigate.png", full_page=False)
+        except Exception:
+            pass
+        raise
     LOGGER.info("warm-up: select-flight 진입 완료 (%s)", page.url)
 
 

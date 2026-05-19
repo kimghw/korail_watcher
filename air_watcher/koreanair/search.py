@@ -116,8 +116,10 @@ def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: AirConfig) ->
     page = client.page
     cur = page.url or ""
     depart_str = cfg.air_depart_date.strftime("%Y%m%d")
+    want_path = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
+                 else "/booking/select-flight")
     on_target = (
-        "/booking/select-flight" in cur
+        want_path in cur
         and f"origin={cfg.air_origin}" in cur
         and f"destination={cfg.air_dest}" in cur
         and f"departureDate={depart_str}" in cur
