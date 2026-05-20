@@ -180,3 +180,62 @@ KDS-SWITCH (label-start="예매", label-end="마일리지 예매")
 - 검증: 위젯 워밍업으로 booking 페이지(calendar-fare-bonus / select-award-flight) 진입까지 가능.
 - 막힌 곳: air-bounds XHR 가 어떤 페이지에서도 403.
 - 다음 우선순위: 위 가설 1번 (페이지 DOM 파싱) 으로 방향 전환 또는 사용자 결정 대기.
+
+---
+
+## 6차 검증 (단계별 캡쳐 + DOM 파싱 결론)
+
+사용자 지시: "벽이면 페이지를 캡쳐해."
+
+캡쳐로 검증된 사실 (`runs/step_01..06_*.png`, `runs/step_A0..A16_*.png`, `runs/final_award_state.png`):
+
+### 모든 단계 동작 정상
+
+| 단계 | 캡쳐 | 결과 |
+|---|---|---|
+| home 로드 | `step_01_home_load.png` | 위젯 표시, "마일리지 예매" 기본 선택 |
+| 편도 chip 클릭 | `step_02_after_oneway.png` | 편도 활성 (chip-2 checked) |
+| fare 토글 (예매 SPAN 클릭) | `step_03_fare_state.png` (is-checked=true=miles), `step_04_after_fare_click.png` (is-checked=false=cash) | 시각적으로 "예매" 강조됨 |
+| 항공편 검색 클릭 | `step_05_after_search_click.png` | **"진행중" 오버레이** 표시 (정상 처리 시작) |
+| 검색 후 5초 | `step_06_after_search_5s.png` | URL home 으로 돌아감 (cash 케이스) |
+
+### fare 토글 매핑 (시각 확인 후 확정)
+
+- `is-checked='true'` → "**마일리지 예매**" 선택 (visually dark BG)
+- `is-checked='false'` → "**예매**" (cash) 선택
+
+→ 코드 매핑 `want_checked = "false" if cash else "true"` 으로 두 번째 보정 필요.
+
+### 직접 goto 결과
+
+| 대상 URL | 결과 |
+|---|---|
+| `/booking/select-award-flight/departure?bookingType=A&...` (miles) | ✅ **페이지 정상 로드** — `step_A1_t2_urldeparture.png` 에서 KE1114 06:55→08:10 5,000마일 등 항공편 표시 |
+| `/booking/select-flight/departure?bookingType=R&...` (cash) | ❌ **bodylen=0** 25초+ 유지 (Akamai 페이지 컨텐츠 차단) |
+
+### DOM 파싱 결과 (award 페이지)
+
+`document.body.innerText` 에서 KE편명 패턴(`^KE\s*\d{2,4}`) 으로 추출 성공:
+
+```
+KE1114 일반석 5,000마일 (대한항공 운항)
+KE1118 일반석 5,000마일 (대한항공 운항)
+KE5212 08:15 GMP 일반석 5,000마일 7석 (진에어 운항)
+KE5214 09:40 GMP 일반석 5,000마일 7석 (진에어 운항)
+KE1136 일반석 5,000마일 (대한항공 운항)
+KE1150 일반석 5,000마일 8석 (대한항공 운항)
+```
+
+좌석 잔여(7석/8석), 매진 정보, 편명, 출도착 시간, 소요시간 모두 DOM 에서 추출 가능. **air-bounds API 없이 모니터링 가능**.
+
+### "벽" 의 실체 정리
+
+- **page 차단은 cash 만, award 는 직접 navigate 허용** — 비대칭.
+- **air-bounds XHR 403** 의 근본 원인은 미확정이지만, 페이지가 정상 렌더링 되면 **DOM 파싱이 우회 경로**.
+- 어제 같은 스크립트가 작동한 이유: 사용자가 어제 cash 페이지를 손으로 진입해둔 상태 (Akamai 가 cash 페이지 직접 진입을 거부하지 않는 일시적 상태) → 그 세션 만료된 후 오늘은 cash direct goto 차단.
+
+### 결론
+
+- Watcher 운영 방향: `bookingType=A` (award) 페이지 direct goto + DOM 파싱.
+- 잔여석/매진 상태 추적엔 cash 가격이 필수 아니므로 award 페이지로 충분.
+- 사용자가 cash 가격까지 원하면 widget warm-up 의 cash 분기를 마저 디버깅해야 (계속 home redirect 문제).
