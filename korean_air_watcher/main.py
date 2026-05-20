@@ -16,17 +16,17 @@ from typing import Dict, List
 from ktx_watcher.chrome_launcher import ChromeLauncher
 from ktx_watcher.notifier.teams import TeamsNotifier
 
-from .config import AirConfig, ConfigError, load_config
+from .config import KoreanAirConfig, ConfigError, load_config
 from .koreanair import BotGuardDetected, LoginError, SiteLayoutChanged, UserActionRequired
 from .koreanair import reserve as reserve_mod
 from .koreanair import search as search_mod
 from .koreanair.client import KoreanAirSPAClient
 
-LOGGER = logging.getLogger("air_watcher")
+LOGGER = logging.getLogger("korean_air_watcher")
 _STOP = False
 
 
-def _build_notifier(cfg: AirConfig) -> TeamsNotifier | None:
+def _build_notifier(cfg: KoreanAirConfig) -> TeamsNotifier | None:
     if not cfg.teams_enabled:
         LOGGER.info("Teams notifier disabled (TEAMS_ENABLED=false)")
         return None
@@ -71,7 +71,7 @@ def _sleep_with_jitter(min_s: float, max_s: float) -> None:
 
 def run_once(
     client: KoreanAirSPAClient,
-    cfg: AirConfig,
+    cfg: KoreanAirConfig,
     notifier: TeamsNotifier | None = None,
     seen_flights: set[str] | None = None,
     leg: str = "out",
@@ -79,8 +79,8 @@ def run_once(
 ) -> bool:
     """leg 별 검색 1회. 새 후보 알림 발송 시 True 반환 (해당 leg `found`)."""
     LOGGER.info("scan leg=%s force_warmup=%s %s→%s %s",
-                leg, force_warmup, cfg.air_origin, cfg.air_dest,
-                cfg.air_depart_date.isoformat())
+                leg, force_warmup, cfg.korean_air_origin, cfg.korean_air_dest,
+                cfg.korean_air_depart_date.isoformat())
     candidates: List[Dict] = search_mod.perform_search(client, cfg, force_warmup=force_warmup)
     if not candidates:
         LOGGER.info("후보 없음 (leg=%s)", leg)
@@ -117,28 +117,28 @@ def main() -> int:
         print(f"Config error: {e}", file=sys.stderr)
         return 1
 
-    logging.basicConfig(level=cfg.air_log_level, format="%(asctime)s | %(message)s")
+    logging.basicConfig(level=cfg.korean_air_log_level, format="%(asctime)s | %(message)s")
     _setup_signals()
 
-    cfg.air_log_dir.mkdir(parents=True, exist_ok=True)
+    cfg.korean_air_log_dir.mkdir(parents=True, exist_ok=True)
 
-    times_str = ",".join(t.strftime("%H:%M") for t in cfg.air_depart_times)
-    cabin_label = cfg.air_cabin or "ANY"
+    times_str = ",".join(t.strftime("%H:%M") for t in cfg.korean_air_depart_times)
+    cabin_label = cfg.korean_air_cabin or "ANY"
     LOGGER.info(
         "Watcher booting: %s→%s %s times=%s cabin=%s fare=%s trip=%s mode=%s",
-        cfg.air_origin, cfg.air_dest, cfg.air_depart_date, times_str,
-        cabin_label, cfg.air_fare_type, cfg.air_trip_type, cfg.air_mode,
+        cfg.korean_air_origin, cfg.korean_air_dest, cfg.korean_air_depart_date, times_str,
+        cabin_label, cfg.korean_air_fare_type, cfg.korean_air_trip_type, cfg.korean_air_mode,
     )
 
     notifier = _build_notifier(cfg)
     _notify(notifier,
-            f"✈ 부팅 {cfg.air_origin}→{cfg.air_dest} {cfg.air_depart_date} {times_str}")
+            f"✈ 부팅 {cfg.korean_air_origin}→{cfg.korean_air_dest} {cfg.korean_air_depart_date} {times_str}")
 
     launcher = ChromeLauncher(
-        port=cfg.air_cdp_port,
-        user_data_dir=cfg.air_cdp_user_data_dir,
-        exe_path=cfg.air_chrome_exe,
-        startup_timeout=cfg.air_cdp_startup_timeout,
+        port=cfg.korean_air_cdp_port,
+        user_data_dir=cfg.korean_air_cdp_user_data_dir,
+        exe_path=cfg.korean_air_chrome_exe,
+        startup_timeout=cfg.korean_air_cdp_startup_timeout,
     )
     try:
         cdp_url = launcher.ensure_running()
@@ -175,10 +175,10 @@ def main() -> int:
 
             # 좌석은 풀렸다 닫혔다 반복하므로 한 번 잡았다고 끝낼 일이 아니다.
             # 양쪽 leg 매 iteration 모두 폴링. 중복 알림은 seen_flights dedup 으로 차단.
-            # 종료는 오직 사용자 신호(SIGINT) — AIR_ONCE 는 검증/디버그 전용.
+            # 종료는 오직 사용자 신호(SIGINT) — KOREAN_AIR_ONCE 는 검증/디버그 전용.
             seen_flights: set[str] = set()
-            is_roundtrip = (cfg.air_trip_type == "roundtrip"
-                            and cfg.air_return_date is not None)
+            is_roundtrip = (cfg.korean_air_trip_type == "roundtrip"
+                            and cfg.korean_air_return_date is not None)
             last_leg: str | None = None
             any_found = False
             while not _STOP:
@@ -200,10 +200,10 @@ def main() -> int:
                             any_found = True
                         last_leg = "return"
 
-                    if cfg.air_once:
-                        LOGGER.info("AIR_ONCE=true → 1회만 실행 후 종료 (debug)")
+                    if cfg.korean_air_once:
+                        LOGGER.info("KOREAN_AIR_ONCE=true → 1회만 실행 후 종료 (debug)")
                         return 0 if any_found else 1
-                    _sleep_with_jitter(float(cfg.air_poll_min), float(cfg.air_poll_max))
+                    _sleep_with_jitter(float(cfg.korean_air_poll_min), float(cfg.korean_air_poll_max))
                 except BotGuardDetected as e:
                     LOGGER.warning("BotGuard: %s — backoff", e)
                     _sleep_with_jitter(15.0, 45.0)

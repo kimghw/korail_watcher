@@ -12,10 +12,10 @@ import logging
 from datetime import datetime, time as time_cls
 from typing import Dict, List, Optional
 
-from ..config import AirConfig
+from ..config import KoreanAirConfig
 from .client import KoreanAirSPAClient, human_pause
 
-LOGGER = logging.getLogger("air_watcher.koreanair.search")
+LOGGER = logging.getLogger("korean_air_watcher.koreanair.search")
 
 
 # 국내선 IATA (DOM* fare family 선택용)
@@ -38,35 +38,35 @@ _INT_FAMILIES = {
 }
 
 
-def _fare_families(cfg: AirConfig) -> List[str]:
-    dom = cfg.air_origin in _DOMESTIC_CODES and cfg.air_dest in _DOMESTIC_CODES
+def _fare_families(cfg: KoreanAirConfig) -> List[str]:
+    dom = cfg.korean_air_origin in _DOMESTIC_CODES and cfg.korean_air_dest in _DOMESTIC_CODES
     table = _DOM_FAMILIES if dom else _INT_FAMILIES
-    return table.get(cfg.air_cabin, table[""])
+    return table.get(cfg.korean_air_cabin, table[""])
 
 
-def _build_payload(cfg: AirConfig) -> Dict:
+def _build_payload(cfg: KoreanAirConfig) -> Dict:
     families = _fare_families(cfg)
     itineraries = [{
-        "departureDateTime": f"{cfg.air_depart_date.isoformat()}T00:00:00.000",
-        "destinationLocationCode": cfg.air_dest,
-        "originLocationCode": cfg.air_origin,
+        "departureDateTime": f"{cfg.korean_air_depart_date.isoformat()}T00:00:00.000",
+        "destinationLocationCode": cfg.korean_air_dest,
+        "originLocationCode": cfg.korean_air_origin,
         "commercialFareFamilies": families,
         "isRequestedBound": True,
     }]
-    if cfg.air_trip_type == "roundtrip" and cfg.air_return_date:
+    if cfg.korean_air_trip_type == "roundtrip" and cfg.korean_air_return_date:
         itineraries.append({
-            "departureDateTime": f"{cfg.air_return_date.isoformat()}T00:00:00.000",
-            "destinationLocationCode": cfg.air_origin,
-            "originLocationCode": cfg.air_dest,
+            "departureDateTime": f"{cfg.korean_air_return_date.isoformat()}T00:00:00.000",
+            "destinationLocationCode": cfg.korean_air_origin,
+            "originLocationCode": cfg.korean_air_dest,
             "commercialFareFamilies": families,
             "isRequestedBound": False,
         })
     travelers: List[Dict] = []
-    for _ in range(cfg.air_pax_adult):
+    for _ in range(cfg.korean_air_pax_adult):
         travelers.append({"passengerTypeCode": "ADT"})
-    for _ in range(cfg.air_pax_child):
+    for _ in range(cfg.korean_air_pax_child):
         travelers.append({"passengerTypeCode": "CHD"})
-    for _ in range(cfg.air_pax_infant):
+    for _ in range(cfg.korean_air_pax_infant):
         travelers.append({"passengerTypeCode": "INF"})
     return {
         "currencyCode": "KRW",
@@ -84,26 +84,26 @@ _CABIN_URL = {
 }
 
 
-def _select_flight_url(cfg: AirConfig) -> str:
-    booking_type = "A" if cfg.air_fare_type == "miles" else "R"
-    trip_type = "RT" if cfg.air_trip_type == "roundtrip" else "OW"
+def _select_flight_url(cfg: KoreanAirConfig) -> str:
+    booking_type = "A" if cfg.korean_air_fare_type == "miles" else "R"
+    trip_type = "RT" if cfg.korean_air_trip_type == "roundtrip" else "OW"
     parts = [
         f"bookingType={booking_type}",
-        f"origin={cfg.air_origin}",
-        f"destination={cfg.air_dest}",
-        f"departureDate={cfg.air_depart_date.strftime('%Y%m%d')}",
-        f"adult={cfg.air_pax_adult}",
-        f"child={cfg.air_pax_child}",
-        f"infant={cfg.air_pax_infant}",
-        f"cabinClass={_CABIN_URL.get(cfg.air_cabin, 'ECONOMY')}",
+        f"origin={cfg.korean_air_origin}",
+        f"destination={cfg.korean_air_dest}",
+        f"departureDate={cfg.korean_air_depart_date.strftime('%Y%m%d')}",
+        f"adult={cfg.korean_air_pax_adult}",
+        f"child={cfg.korean_air_pax_child}",
+        f"infant={cfg.korean_air_pax_infant}",
+        f"cabinClass={_CABIN_URL.get(cfg.korean_air_cabin, 'ECONOMY')}",
         f"tripType={trip_type}",
     ]
-    if cfg.air_trip_type == "roundtrip" and cfg.air_return_date:
-        parts.append(f"returnDate={cfg.air_return_date.strftime('%Y%m%d')}")
+    if cfg.korean_air_trip_type == "roundtrip" and cfg.korean_air_return_date:
+        parts.append(f"returnDate={cfg.korean_air_return_date.strftime('%Y%m%d')}")
     return "https://www.koreanair.com/booking/select-flight/departure?" + "&".join(parts)
 
 
-def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: AirConfig,
+def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: KoreanAirConfig,
                                    force_warmup: bool = False) -> None:
     """fetch 전에 select-flight 페이지에 있는지 확인. drift 했으면 warm-up 재호출.
 
@@ -119,7 +119,7 @@ def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: AirConfig,
         cur = page.evaluate("location.href") or ""
     except Exception:
         cur = page.url or ""
-    want_path = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
+    want_path = ("/booking/select-award-flight" if cfg.korean_air_fare_type == "miles"
                  else "/booking/select-flight")
     if force_warmup:
         LOGGER.info("force_warmup=True — warm-up 강제 (leg 전환 시점)")
@@ -185,8 +185,8 @@ def _fetch_air_bounds(client: KoreanAirSPAClient, payload: Dict) -> Optional[Dic
         return None
 
 
-def _within_window(t: time_cls, cfg: AirConfig, leg: str = "depart") -> bool:
-    win = cfg.air_depart_time_window if leg == "depart" else cfg.air_return_time_window
+def _within_window(t: time_cls, cfg: KoreanAirConfig, leg: str = "depart") -> bool:
+    win = cfg.korean_air_depart_time_window if leg == "depart" else cfg.korean_air_return_time_window
     if not win:
         return True
     s, e = win
@@ -238,20 +238,20 @@ def _seg_to_candidate(seg: Dict, fare_type: str) -> Dict:
     }
 
 
-def _extract_candidates(data: Dict, cfg: AirConfig) -> List[Dict]:
+def _extract_candidates(data: Dict, cfg: KoreanAirConfig) -> List[Dict]:
     groups = data.get("airBoundGroups") or []
     out: List[Dict] = []
     for grp in groups:
         segs = _segments({"boundDetails": grp.get("boundDetails") or grp.get("bound") or grp})
         if not segs:
             continue
-        cand = _seg_to_candidate(segs[0], cfg.air_fare_type)
+        cand = _seg_to_candidate(segs[0], cfg.korean_air_fare_type)
         dt = cand.get("depart_dt")
         if dt and not _within_window(dt.time(), cfg, "depart"):
             continue
-        if cfg.air_flight_no:
+        if cfg.korean_air_flight_no:
             wants = [w.strip().replace(" ", "").upper()
-                     for w in cfg.air_flight_no.split(",") if w.strip()]
+                     for w in cfg.korean_air_flight_no.split(",") if w.strip()]
             got = cand["flight_no"].replace(" ", "").upper()
             if not any(w in got for w in wants):
                 continue
@@ -259,7 +259,7 @@ def _extract_candidates(data: Dict, cfg: AirConfig) -> List[Dict]:
     return out
 
 
-def _dom_scrape_candidates(client: KoreanAirSPAClient, cfg: AirConfig) -> List[Dict]:
+def _dom_scrape_candidates(client: KoreanAirSPAClient, cfg: KoreanAirConfig) -> List[Dict]:
     """Akamai 가 air-bounds API 를 403 으로 막을 때의 fallback.
 
     KE 가 결과 페이지 렌더링은 허용한다는 점을 이용 — `[class*='itinerary']` 카드에서
@@ -315,8 +315,8 @@ def _dom_scrape_candidates(client: KoreanAirSPAClient, cfg: AirConfig) -> List[D
 
     out: List[Dict] = []
     seen_flight_cabin = set()
-    miles_mode = (cfg.air_fare_type == "miles")
-    cabin_pref = (cfg.air_cabin or "").lower()  # "" = ANY
+    miles_mode = (cfg.korean_air_fare_type == "miles")
+    cabin_pref = (cfg.korean_air_cabin or "").lower()  # "" = ANY
     unit = "마일" if miles_mode else "원"
 
     # 검사할 cabin 후보
@@ -344,9 +344,9 @@ def _dom_scrape_candidates(client: KoreanAirSPAClient, cfg: AirConfig) -> List[D
             continue
         if not _within_window(dep_time, cfg, "depart"):
             continue
-        if cfg.air_flight_no:
+        if cfg.korean_air_flight_no:
             wants = [w.strip().replace(" ", "").upper()
-                     for w in cfg.air_flight_no.split(",") if w.strip()]
+                     for w in cfg.korean_air_flight_no.split(",") if w.strip()]
             got = flight_no.upper()
             if not any(w in got for w in wants):
                 continue
@@ -367,23 +367,23 @@ def _dom_scrape_candidates(client: KoreanAirSPAClient, cfg: AirConfig) -> List[D
             seen_flight_cabin.add(key)
             out.append({
                 "flight_no": flight_no,
-                "origin": cfg.air_origin,
-                "dest": cfg.air_dest,
+                "origin": cfg.korean_air_origin,
+                "dest": cfg.korean_air_dest,
                 "depart": dep_str,
                 "arrive": arr_str,
-                "depart_dt": datetime.combine(cfg.air_depart_date, dep_time),
+                "depart_dt": datetime.combine(cfg.korean_air_depart_date, dep_time),
                 "cabin": ckey,
                 "cabin_label": klabel,
-                "fare_type": cfg.air_fare_type,
+                "fare_type": cfg.korean_air_fare_type,
                 "status": "available",
-                "raw": f"{flight_no} {cfg.air_origin}→{cfg.air_dest} "
+                "raw": f"{flight_no} {cfg.korean_air_origin}→{cfg.korean_air_dest} "
                        f"{dep_str}→{arr_str} {klabel}"
                        + (" [miles]" if miles_mode else " [cash]"),
             })
     return out
 
 
-def perform_search(client: KoreanAirSPAClient, cfg: AirConfig,
+def perform_search(client: KoreanAirSPAClient, cfg: KoreanAirConfig,
                     force_warmup: bool = False) -> List[Dict]:
     _ensure_select_flight_referer(client, cfg, force_warmup=force_warmup)
     payload = _build_payload(cfg)

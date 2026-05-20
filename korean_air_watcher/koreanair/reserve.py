@@ -19,11 +19,11 @@ from typing import Dict, Optional
 
 from playwright.sync_api import TimeoutError as PWTimeoutError
 
-from ..config import AirConfig
+from ..config import KoreanAirConfig
 from . import LoginError
 from .client import KoreanAirSPAClient
 
-LOGGER = logging.getLogger("air_watcher.koreanair.reserve")
+LOGGER = logging.getLogger("korean_air_watcher.koreanair.reserve")
 
 
 # Playwright evaluate 는 expression 만 받음 → 모든 JS 는 IIFE 안에서 자기-포함되게 작성.
@@ -165,7 +165,7 @@ _ERR_MSGS_JS = r"""
 """
 
 
-def ensure_logged_in(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
+def ensure_logged_in(client: KoreanAirSPAClient, cfg: KoreanAirConfig) -> None:
     """Playwright 로 KE 로그인 → 쿠키/세션 확보. 이미 로그인 상태면 skip."""
     page = client.page
 
@@ -181,8 +181,8 @@ def ensure_logged_in(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
         LOGGER.info("이미 로그인 상태")
         return
 
-    if not cfg.air_user or not cfg.air_pass:
-        raise LoginError("AIR_USER / AIR_PASS 비어 있음 — .env 확인")
+    if not cfg.korean_air_user or not cfg.korean_air_pass:
+        raise LoginError("KOREAN_AIR_USER / KOREAN_AIR_PASS 비어 있음 — .env 확인")
 
     LOGGER.info("로그인 페이지 진입")
     try:
@@ -198,10 +198,10 @@ def ensure_logged_in(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
         raise LoginError(f"로그인 폼 hydration 실패: {e}") from e
     _time.sleep(1.0)
 
-    if not _set_input_value(page, "text", cfg.air_user):
+    if not _set_input_value(page, "text", cfg.korean_air_user):
         raise LoginError("ID 필드 입력 실패")
     _time.sleep(0.3)
-    if not _set_input_value(page, "password", cfg.air_pass):
+    if not _set_input_value(page, "password", cfg.korean_air_pass):
         raise LoginError("PW 필드 입력 실패")
     _time.sleep(0.3)
 
@@ -1080,14 +1080,14 @@ def _find_search_button(page) -> Optional[Dict]:
     })()""")
 
 
-def _wait_select_flight(page, cfg: AirConfig, timeout_s: float = 25.0) -> None:
+def _wait_select_flight(page, cfg: KoreanAirConfig, timeout_s: float = 25.0) -> None:
     """cash → /booking/select-flight, miles → /booking/select-award-flight 진입 대기.
 
     page.url 외에도 JS `location.href` 와 context 의 다른 page 도 확인 — KE 가 새 탭/iframe
     으로 결과를 띄울 가능성 대비.
     """
     want_paths = ["/booking/select-flight", "/booking/select-award-flight"]
-    primary = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
+    primary = ("/booking/select-award-flight" if cfg.korean_air_fare_type == "miles"
                else "/booking/select-flight")
     ctx = page.context
     deadline = _time.time() + timeout_s
@@ -1104,7 +1104,7 @@ def _wait_select_flight(page, cfg: AirConfig, timeout_s: float = 25.0) -> None:
             actual = js_url or page_url
             if primary not in actual and primary not in ",".join(all_urls):
                 LOGGER.warning("warm-up: 의도된 fare_type=%s(%s) 가 아닌 페이지 진입 — actual=%s, ctx_pages=%s",
-                               cfg.air_fare_type, primary, actual, all_urls)
+                               cfg.korean_air_fare_type, primary, actual, all_urls)
             # flight-list DOM 잠깐 대기
             for _ in range(20):
                 try:
@@ -1124,7 +1124,7 @@ def _wait_select_flight(page, cfg: AirConfig, timeout_s: float = 25.0) -> None:
     )
 
 
-def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig, *,
+def warm_up_select_flight(client: KoreanAirSPAClient, cfg: KoreanAirConfig, *,
                             force: bool = False) -> None:
     """위젯 클릭 경로로 select-flight 페이지에 진입해 Akamai 세션 확보.
 
@@ -1136,10 +1136,10 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig, *,
     일치하면 즉시 return. `force=True` 면 그 가드를 건너뛰고 무조건 home →
     위젯 단계까지 다시 실행 (roundtrip return leg 등 origin/dest 가 바뀌었을 때).
     """
-    if cfg.air_trip_type != "oneway":
+    if cfg.korean_air_trip_type != "oneway":
         # TODO: roundtrip warm-up — date picker 에서 시작일 클릭 후 종료일도 클릭.
         raise NotImplementedError(
-            "warm-up: roundtrip 미구현 — AIR_TRIP_TYPE=oneway 로 운영하거나, "
+            "warm-up: roundtrip 미구현 — KOREAN_AIR_TRIP_TYPE=oneway 로 운영하거나, "
             "수동으로 select-flight 까지 진입한 뒤 워처 기동"
         )
 
@@ -1150,8 +1150,8 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig, *,
         url = page.evaluate("location.href") or ""
     except Exception:
         url = page.url or ""
-    depart_str = cfg.air_depart_date.strftime("%Y%m%d")
-    want_path = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
+    depart_str = cfg.korean_air_depart_date.strftime("%Y%m%d")
+    want_path = ("/booking/select-award-flight" if cfg.korean_air_fare_type == "miles"
                  else "/booking/select-flight")
     if not force and want_path in url:
         LOGGER.info("warm-up: 이미 select-flight 페이지 (%s)", url)
@@ -1196,21 +1196,21 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig, *,
         LOGGER.debug("chip dump err: %s", e)
 
     # cash/miles 탭 전환 — label 텍스트로 식별
-    LOGGER.info("warm-up: fare_type=%s", cfg.air_fare_type)
-    _ensure_fare_type(page, cfg.air_fare_type)
+    LOGGER.info("warm-up: fare_type=%s", cfg.korean_air_fare_type)
+    _ensure_fare_type(page, cfg.korean_air_fare_type)
 
     # 참고: chip-X 인풋은 hidden radio 라 click 해도 시각/세션 상태에 반영 안 됨.
     # 실제 trip-type 컨트롤은 date picker 가 열렸을 때 보이는 ui-switch 탭이다.
     # _set_depart_date 안에서 _ensure_oneway_in_picker 로 처리한다.
 
-    LOGGER.info("warm-up: origin=%s", cfg.air_origin)
-    _set_airport(page, "origin", cfg.air_origin)
+    LOGGER.info("warm-up: origin=%s", cfg.korean_air_origin)
+    _set_airport(page, "origin", cfg.korean_air_origin)
 
-    LOGGER.info("warm-up: dest=%s", cfg.air_dest)
-    _set_airport(page, "dest", cfg.air_dest)
+    LOGGER.info("warm-up: dest=%s", cfg.korean_air_dest)
+    _set_airport(page, "dest", cfg.korean_air_dest)
 
-    LOGGER.info("warm-up: depart_date=%s", cfg.air_depart_date.isoformat())
-    _set_depart_date(page, cfg.air_depart_date)
+    LOGGER.info("warm-up: depart_date=%s", cfg.korean_air_depart_date.isoformat())
+    _set_depart_date(page, cfg.korean_air_depart_date)
 
     LOGGER.info("warm-up: '항공편 검색' 클릭")
     sb = _find_search_button(page)
@@ -1236,7 +1236,7 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig, *,
     LOGGER.info("warm-up: select-flight 진입 완료 (%s)", page.url)
 
 
-def attempt_reservation(client: KoreanAirSPAClient, cfg: AirConfig, candidate: Dict) -> None:
+def attempt_reservation(client: KoreanAirSPAClient, cfg: KoreanAirConfig, candidate: Dict) -> None:
     raise NotImplementedError(
         "KE 예약 단계 자동화 미구현 — search 모드로만 모니터링 가능."
     )

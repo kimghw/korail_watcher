@@ -21,9 +21,9 @@ from playwright.sync_api import (
     sync_playwright,
 )
 
-LOGGER = logging.getLogger("air_watcher.koreanair.client")
+LOGGER = logging.getLogger("korean_air_watcher.koreanair.client")
 
-HUMANIZE = os.getenv("AIR_HUMANIZE", "true").lower() not in ("false", "0", "no")
+HUMANIZE = os.getenv("KOREAN_AIR_HUMANIZE", "true").lower() not in ("false", "0", "no")
 
 
 def human_pause(min_s: float = 0.5, max_s: float = 1.2) -> None:
