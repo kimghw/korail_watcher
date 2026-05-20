@@ -257,9 +257,19 @@ def _set_viewport(page) -> None:
 def _ensure_home(page) -> None:
     # 로그인 직후의 redirect 중간 상태에서 chip click handler 가 wire-up 전이면
     # 클릭이 먹히지 않는다 → fresh navigate 로 깨끗하게 다시 로드.
-    LOGGER.info("warm-up: home fresh navigate (url=%s)", page.url)
+    # SPA 가 home goto 를 가로채는 경우(대기예약 등 다른 경로에 갇힘) about:blank 로
+    # 컨텍스트 깨고 cache-bust 쿼리로 다시 들어간다.
     try:
-        page.goto("https://www.koreanair.com/",
+        cur = page.evaluate("location.href")
+    except Exception:
+        cur = page.url
+    LOGGER.info("warm-up: home fresh navigate (url=%s)", cur)
+    try:
+        page.goto("about:blank", wait_until="domcontentloaded", timeout=8_000)
+    except Exception as e:
+        LOGGER.debug("warm-up: about:blank 실패: %s", e)
+    try:
+        page.goto(f"https://www.koreanair.com/?_t={int(_time.time())}",
                   wait_until="domcontentloaded", timeout=30_000)
     except PWTimeoutError:
         LOGGER.warning("warm-up: home goto timeout — 계속 진행")
@@ -267,8 +277,6 @@ def _ensure_home(page) -> None:
     while _time.time() < deadline:
         try:
             if page.evaluate("!!document.querySelector(\"input[id='chip-2']\")"):
-                # chip-2 가 DOM 에는 있어도 click handler 가 hydration 전일 수 있어
-                # 추가 1 초 대기.
                 _time.sleep(1.0)
                 return
         except Exception:
@@ -1116,7 +1124,8 @@ def _wait_select_flight(page, cfg: AirConfig, timeout_s: float = 25.0) -> None:
     )
 
 
-def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
+def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig, *,
+                            force: bool = False) -> None:
     """위젯 클릭 경로로 select-flight 페이지에 진입해 Akamai 세션 확보.
 
     Akamai 는 /booking/select-flight 직접 navigate 를 / 로 redirect 한다.
@@ -1124,7 +1133,8 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
     정상 세션이 잡히고, 이후 air-bounds XHR 가 200 을 반환한다.
 
     Idempotent — 이미 select-flight 페이지에 있고 origin/dest/date 가 cfg 와
-    일치하면 즉시 return.
+    일치하면 즉시 return. `force=True` 면 그 가드를 건너뛰고 무조건 home →
+    위젯 단계까지 다시 실행 (roundtrip return leg 등 origin/dest 가 바뀌었을 때).
     """
     if cfg.air_trip_type != "oneway":
         # TODO: roundtrip warm-up — date picker 에서 시작일 클릭 후 종료일도 클릭.
@@ -1136,16 +1146,30 @@ def warm_up_select_flight(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
     page = client.page
     _set_viewport(page)
 
-    url = page.url or ""
+    try:
+        url = page.evaluate("location.href") or ""
+    except Exception:
+        url = page.url or ""
     depart_str = cfg.air_depart_date.strftime("%Y%m%d")
     want_path = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
                  else "/booking/select-flight")
-    if (want_path in url
-            and f"origin={cfg.air_origin}" in url
-            and f"destination={cfg.air_dest}" in url
-            and f"departureDate={depart_str}" in url):
+    if not force and want_path in url:
         LOGGER.info("warm-up: 이미 select-flight 페이지 (%s)", url)
         return
+    if force:
+        LOGGER.info("warm-up: force=True — 위젯 재셋업 (현재 url=%s)", url)
+    # 보너스 대기예약 페이지(select-award-wait-flight) 도 검색 결과 컨텍스트와 동치 —
+    # reload 만으로 select-award-flight 로 복귀 시도. 실패해도 home navigate 로 빠짐.
+    if "/booking/select-award-wait-flight" in url or "/booking/wait-flight" in url:
+        LOGGER.info("warm-up: 대기예약 페이지 (%s) — reload 로 검색 결과 복귀 시도", url)
+        try:
+            page.reload(wait_until="domcontentloaded", timeout=20_000)
+            new_url = page.evaluate("location.href") or url
+            if want_path in new_url:
+                LOGGER.info("warm-up: reload 후 검색 결과 페이지 (%s)", new_url)
+                return
+        except Exception as e:
+            LOGGER.warning("warm-up: 대기예약 reload 실패: %s", e)
 
     LOGGER.info("warm-up: 홈 위젯 진입")
     _ensure_home(page)

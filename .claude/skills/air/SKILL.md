@@ -16,6 +16,23 @@ KE 는 KTX/SRT 와 달리 (1) 국내/국제 분기, (2) 보너스(마일리지)/
 
 `.env.air` 는 git tracked (`.env.ktx`/`.env.srt` 와 동일 정책). 워처가 `ENV_FILES` 맨 앞에서 우선 로드한다 (`air_watcher/config.py`).
 
+### ⚠ KE 홈 위젯은 가짜로 가득 — 함부로 만지지 말 것
+
+KE 홈 검색 위젯은 일반 HTML form 처럼 보이지만 KDS (Korean Air Design System) 커스텀 컴포넌트가 깔려 있어 평범한 `click()`/`fill()` 으로는 안 먹는다. 사용자/스킬 흐름이 위젯을 새로 만지려 할 때마다 아래 함정 매번 부딪힘 — **가능하면 위젯 안 만지고 사용자가 띄워둔 select-flight 페이지에서 `page.reload()` 만**으로 폴링한다 (`_ensure_select_flight_referer` 구현 참고).
+
+| 함정 | 메커니즘 | 회피 |
+|---|---|---|
+| `chip-X` 가짜 라디오 | radio input 의 `checked` 속성이 UI 실상과 어긋남 | `is-checked` / `aria-checked` 또는 class 변화로 폴링 |
+| `ui-switch` 토글 클릭 무시 | KDS-SWITCH 가 일반 `click()` 흡수 — pointerdown→up 또는 드래그 필요 | `mouse.down(x,y)→mouse.up(x,y)` 시퀀스. 더 쉬운 우회: URL 직접 진입 (`/booking/select-flight` vs `/booking/select-award-flight`) |
+| fare-type 탭처럼 보이지만 탭 아님 | fare 는 토글이지 탭이 아님 — 탭으로 찾으면 매번 fail | ui-switch 트랙 좌표 또는 URL 분기 |
+| `Escape` = discard | picker 안 Escape 는 변경 사항 버림 (열린 picker 자체가 닫혀있던 값은 보존) | 외부 영역 click 또는 picker 내부 "적용"/"확인" 클릭으로 닫음 |
+| `page.url` stale | CDP 의 `pg.url` 캐시가 navigation 뒤에도 갱신 안 됨 | `pg.evaluate("location.href")` 또는 특정 element 존재로 판단 |
+| KE 의 home redirect | idle 또는 봇 의심 상태에서 결과 페이지를 home 으로 강제 redirect | reload-only 폴링 + 이탈 시에만 warm-up 1회 |
+| Akamai 403 (`/api/rp/dx/search/air-bounds`) | bot fingerprint 로 우리 fetch 만 차단, KE 자체 XHR 은 통과 | API 포기, DOM scrape (`[class*='itinerary']` + parent 8단계 ancestor walk) |
+| 매진 판정 false positive | itinerary 카드 자체엔 fare 정보 없음 — "매진" 단어 검색해도 False | parent 8단계까지 walk 해서 매진/미운영/마일/원 단어 포함 ancestor 의 inner_text 사용 |
+
+이미 발생했던 실제 사례와 검증된 fix 는 [references/troubleshooting.md](references/troubleshooting.md) 에 자세히. 새로 위젯 자동화를 만진다면 그 문서부터.
+
 ---
 
 ## ⚠ 사전 조건 — 동작 환경
@@ -62,7 +79,7 @@ KE 는 KTX/SRT 와 달리 (1) 국내/국제 분기, (2) 보너스(마일리지)/
 
 질문 1 — TRIP_TYPE:
 - `oneway` (편도)
-- `roundtrip` (왕복)
+- `roundtrip` (왕복) — 워처가 매 iteration `[갈때]` outbound, `[올때]` return 두 검색을 번갈아 수행. 한 쪽 알림 발송하면 그 쪽은 dedup 되고 나머지만 계속 폴링. 둘 다 알림 완료되면 종료. 각 leg 가 별도 leg 라벨로 알림.
 - `multi` (다구간) — 현재 워처는 미지원, 선택 시 "다구간은 수동 진행하세요" 알림 후 종료
 
 질문 2 — FARE_TYPE:

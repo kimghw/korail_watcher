@@ -73,51 +73,40 @@ def run_once(
     client: KoreanAirSPAClient,
     cfg: AirConfig,
     notifier: TeamsNotifier | None = None,
+    seen_flights: set[str] | None = None,
+    leg: str = "out",
+    force_warmup: bool = False,
 ) -> bool:
-    """Return True 면 main loop 종료."""
-    candidates: List[Dict] = search_mod.perform_search(client, cfg)
+    """leg 별 검색 1회. 새 후보 알림 발송 시 True 반환 (해당 leg `found`)."""
+    LOGGER.info("scan leg=%s force_warmup=%s %s→%s %s",
+                leg, force_warmup, cfg.air_origin, cfg.air_dest,
+                cfg.air_depart_date.isoformat())
+    candidates: List[Dict] = search_mod.perform_search(client, cfg, force_warmup=force_warmup)
     if not candidates:
-        LOGGER.info("후보 없음. 다음 iteration 진행")
+        LOGGER.info("후보 없음 (leg=%s)", leg)
         return False
 
-    LOGGER.info("후보 발견: %d 건", len(candidates))
+    LOGGER.info("후보 발견 (leg=%s): %d 건", leg, len(candidates))
     for i, c in enumerate(candidates[:5]):
         LOGGER.info("  [%d] %s", i, c.get("raw", "")[:200])
 
-    summary = "\n".join(c.get("raw", "")[:120] for c in candidates[:5])
-    _notify(notifier, f"후보 발견 ({len(candidates)}건)\n{summary}")
-
-    if cfg.air_mode == "search":
-        LOGGER.info("MODE=search — 예약 시도 안 함")
+    if seen_flights is None:
+        seen_flights = set()
+    def _key(c: Dict) -> str:
+        return f"{leg}/{c.get('flight_no', '')}/{c.get('cabin', '')}"
+    new_candidates = [c for c in candidates if _key(c) not in seen_flights]
+    if not new_candidates:
+        LOGGER.info("새 후보 없음 (모두 알림 완료, leg=%s) — notify skip", leg)
         return False
 
-    # MODE=reserve — 현재 미구현 (NotImplementedError 던짐)
-    best = candidates[0]
-    try:
-        reserve_mod.attempt_reservation(client, cfg, best)
-        LOGGER.info("✅ 좌석 hold 통과")
-        _notify(notifier, "✅ 좌석 hold 통과 — 10분 안에 수동 결제")
-        return True
-    except NotImplementedError as e:
-        LOGGER.error("reserve 미구현: %s", e)
-        _notify(notifier, f"⚠ 예약 자동화 미구현 — search 모드로 사용하세요\n{e}")
-        return True
-    except BotGuardDetected as e:
-        LOGGER.warning("BotGuard: %s — backoff", e)
-        _notify(notifier, f"⚠ 봇 가드 감지 — 다음 iteration 재시도\n{e}")
-        return False
-    except UserActionRequired as e:
-        LOGGER.error("user action required: %s", e)
-        _notify(notifier, f"❌ 예약 단계 사용자 개입 필요\n{e}")
-        return True
-    except SiteLayoutChanged as e:
-        LOGGER.error("layout changed: %s", e)
-        _notify(notifier, f"❌ 사이트 구조 변경\n{e}")
-        return True
-    except LoginError as e:
-        LOGGER.error("login error: %s", e)
-        _notify(notifier, f"❌ 로그인 오류\n{e}")
-        return True
+    leg_label = "갈때" if leg == "out" else "올때"
+    summary = "\n".join(c.get("raw", "")[:120] for c in new_candidates[:5])
+    _notify(notifier,
+            f"[{leg_label}] 후보 발견 ({len(new_candidates)}건)\n{summary}")
+    for c in new_candidates:
+        seen_flights.add(_key(c))
+    LOGGER.info("seen_flights 누적: %s", sorted(seen_flights))
+    return True
 
 
 def main() -> int:
@@ -163,30 +152,56 @@ def main() -> int:
 
     try:
         with KoreanAirSPAClient(cdp_url) as client:
-            # 로그인은 search/reserve 모두 필요 — air-bounds API 가 익명이면 403.
-            try:
-                reserve_mod.ensure_logged_in(client, cfg)
-            except LoginError as e:
-                LOGGER.error("로그인 실패: %s", e)
-                _notify(notifier, f"❌ KE 로그인 실패\n{e}")
-                return 1
-
             # 위젯 워밍업 — Akamai 가 /booking/select-flight 직접 진입을 차단하므로
             # 홈 위젯 클릭 경로로 한 번 들어가 줘야 air-bounds XHR 가 200 을 준다.
+            # roundtrip 은 워처 내부에서 outbound/return 두 oneway 검색으로 처리하므로
+            # warm-up 도 oneway view 로 호출.
+            warmup_cfg = cfg.as_oneway_outbound()
             try:
-                reserve_mod.warm_up_select_flight(client, cfg)
+                reserve_mod.warm_up_select_flight(client, warmup_cfg)
             except NotImplementedError as e:
                 LOGGER.error("warm-up 미지원: %s", e)
                 _notify(notifier, f"❌ warm-up 미지원\n{e}")
                 return 1
             except LoginError as e:
-                LOGGER.error("warm-up 실패: %s", e)
-                _notify(notifier, f"❌ select-flight warm-up 실패\n{e}")
-                return 1
+                LOGGER.warning(
+                    "초기 warm-up 실패 (%s) — main loop 에서 재시도", e
+                )
 
+            seen_flights: set[str] = set()
+            is_roundtrip = (cfg.air_trip_type == "roundtrip"
+                            and cfg.air_return_date is not None)
+            out_found = False
+            ret_found = False
+            last_leg: str | None = None
             while not _STOP:
                 try:
-                    done = run_once(client, cfg, notifier)
+                    # ── outbound (갈때) ──
+                    out_cfg = cfg.as_oneway_outbound()
+                    if not out_found:
+                        force = (last_leg == "return")
+                        out_found = run_once(client, out_cfg, notifier, seen_flights,
+                                              leg="out", force_warmup=force)
+                        last_leg = "out"
+
+                    # ── return (올때) ──
+                    if is_roundtrip and not ret_found:
+                        ret_cfg = cfg.swap_for_return()
+                        force = (last_leg == "out")  # leg 전환 → 위젯 재셋업
+                        ret_found = run_once(client, ret_cfg, notifier, seen_flights,
+                                              leg="return", force_warmup=force)
+                        last_leg = "return"
+
+                    # 종료 조건 (search 모드)
+                    if cfg.air_mode == "search":
+                        if not is_roundtrip and out_found:
+                            LOGGER.info("oneway 알림 완료 — 종료")
+                            return 0
+                        if is_roundtrip and out_found and ret_found:
+                            LOGGER.info("갈때/올때 모두 알림 완료 — 종료")
+                            return 0
+
+                    done = False  # reserve 모드 호환용 (아래 if done: 진입 안 함)
                     if done:
                         return 0
                     if cfg.air_once:

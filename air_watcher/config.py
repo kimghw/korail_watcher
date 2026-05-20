@@ -19,7 +19,20 @@ class ConfigError(RuntimeError):
 
 
 def _load_env_files() -> None:
-    for f in ENV_FILES:
+    """`.env.air` (또는 AIR_ENV_FILE 로 override 한 파일) → `.env` 순으로 로드.
+
+    roundtrip 을 두 워처로 운영할 때 둘째 워처는
+    `AIR_ENV_FILE=.env.air.return python -m air_watcher.main` 처럼 띄운다.
+    """
+    extra = os.getenv("AIR_ENV_FILE")
+    files: list[Path] = []
+    if extra:
+        files.append(Path(extra))
+    else:
+        files.append(Path(".env.air"))
+    files.append(Path("env") / ".env")
+    files.append(Path(".env"))
+    for f in files:
         if f.is_file():
             load_dotenv(f, override=False)
 
@@ -96,6 +109,36 @@ class AirConfig(BaseModel):
     teams_prefix: str = Field("[AIR WATCHER]", alias="TEAMS_PREFIX")
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
+
+    def as_oneway_outbound(self) -> "AirConfig":
+        """warm-up·검색 호출용 — trip_type 만 oneway 로 강제한 cfg view.
+
+        워처는 roundtrip 도 내부적으로 outbound/return 두 oneway 검색으로 처리.
+        reserve.py 의 warm_up_select_flight 는 trip_type=roundtrip 이면 NotImplementedError
+        를 던지므로 진입 전 view 변환이 필요하다.
+        """
+        return self.model_copy(update={
+            "air_trip_type": "oneway",
+            "air_return_date": None,
+            "air_return_times": [],
+            "air_return_time_window": None,
+        })
+
+    def swap_for_return(self) -> "AirConfig":
+        """roundtrip 의 return leg view — origin/dest swap + return date/times/window 로 교체."""
+        if not self.air_return_date:
+            raise ValueError("AIR_RETURN_DATE 가 비어있어 return view 를 만들 수 없음")
+        return self.model_copy(update={
+            "air_trip_type": "oneway",
+            "air_origin": self.air_dest,
+            "air_dest": self.air_origin,
+            "air_depart_date": self.air_return_date,
+            "air_depart_times": list(self.air_return_times) or list(self.air_depart_times),
+            "air_depart_time_window": self.air_return_time_window or self.air_depart_time_window,
+            "air_return_date": None,
+            "air_return_times": [],
+            "air_return_time_window": None,
+        })
 
     # ─ validators ─
     @field_validator("air_depart_date", mode="before")

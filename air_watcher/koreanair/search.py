@@ -103,7 +103,8 @@ def _select_flight_url(cfg: AirConfig) -> str:
     return "https://www.koreanair.com/booking/select-flight/departure?" + "&".join(parts)
 
 
-def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: AirConfig) -> None:
+def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: AirConfig,
+                                   force_warmup: bool = False) -> None:
     """fetch 전에 select-flight 페이지에 있는지 확인. drift 했으면 warm-up 재호출.
 
     Akamai 는 /booking/select-flight 직접 navigate 를 / 로 redirect 시키므로
@@ -114,18 +115,31 @@ def _ensure_select_flight_referer(client: KoreanAirSPAClient, cfg: AirConfig) ->
     from . import reserve as _reserve
 
     page = client.page
-    cur = page.url or ""
-    depart_str = cfg.air_depart_date.strftime("%Y%m%d")
+    try:
+        cur = page.evaluate("location.href") or ""
+    except Exception:
+        cur = page.url or ""
     want_path = ("/booking/select-award-flight" if cfg.air_fare_type == "miles"
                  else "/booking/select-flight")
-    on_target = (
-        want_path in cur
-        and f"origin={cfg.air_origin}" in cur
-        and f"destination={cfg.air_dest}" in cur
-        and f"departureDate={depart_str}" in cur
-    )
-    if not on_target:
-        LOGGER.info("select-flight 페이지 이탈 (url=%s) — warm-up 재호출", cur)
+    if force_warmup:
+        LOGGER.info("force_warmup=True — warm-up 강제 (leg 전환 시점)")
+        _reserve.warm_up_select_flight(client, cfg, force=True)
+    elif want_path in cur:
+        # 이미 검색 결과 페이지 — 그냥 reload (warm-up 함정 회피)
+        LOGGER.info("새로고침: %s", cur)
+        try:
+            page.reload(wait_until="domcontentloaded", timeout=30000)
+        except Exception as e:
+            LOGGER.warning("reload 실패: %s", e)
+        try:
+            new_url = page.evaluate("location.href") or ""
+        except Exception:
+            new_url = page.url or ""
+        if want_path not in new_url:
+            LOGGER.info("reload 후 검색 페이지 이탈 (%s) — warm-up 1회 시도", new_url)
+            _reserve.warm_up_select_flight(client, cfg)
+    else:
+        LOGGER.info("검색 페이지 아님 (%s) — warm-up 1회 시도", cur)
         _reserve.warm_up_select_flight(client, cfg)
     # KE 자체 air-bounds 호출이 끝나며 Akamai 쿠키가 안착하길 기다린다 (옵션).
     deadline = _t.time() + 12.0
@@ -236,35 +250,157 @@ def _extract_candidates(data: Dict, cfg: AirConfig) -> List[Dict]:
         if dt and not _within_window(dt.time(), cfg, "depart"):
             continue
         if cfg.air_flight_no:
-            want = cfg.air_flight_no.replace(" ", "").upper()
+            wants = [w.strip().replace(" ", "").upper()
+                     for w in cfg.air_flight_no.split(",") if w.strip()]
             got = cand["flight_no"].replace(" ", "").upper()
-            if want not in got:
+            if not any(w in got for w in wants):
                 continue
         out.append(cand)
     return out
 
 
-def perform_search(client: KoreanAirSPAClient, cfg: AirConfig) -> List[Dict]:
-    _ensure_select_flight_referer(client, cfg)
+def _dom_scrape_candidates(client: KoreanAirSPAClient, cfg: AirConfig) -> List[Dict]:
+    """Akamai 가 air-bounds API 를 403 으로 막을 때의 fallback.
+
+    KE 가 결과 페이지 렌더링은 허용한다는 점을 이용 — `[class*='itinerary']` 카드에서
+    편명 / 시간 / 매진여부 / 마일 표시를 텍스트로 긁어 candidate 를 만든다.
+    매진(`매진`) 또는 미운영(`미운영`) 만 있고 가격(`마일`/`원`) 없는 카드는 skip.
+    """
+    import re
+    import time as _t
+    from datetime import datetime
+
+    page = client.page
+
+    # KE편명이 한 번이라도 나올 때까지 최대 20s 대기 (로딩 끝 신호)
+    deadline = _t.time() + 20
+    body = ""
+    while _t.time() < deadline:
+        try:
+            body = page.locator("body").inner_text(timeout=1500)
+        except Exception:
+            body = ""
+        if "찾고 있어요" not in body and re.search(r"KE\d{4,5}", body):
+            break
+        _t.sleep(0.7)
+    if not re.search(r"KE\d{4,5}", body):
+        LOGGER.warning("DOM scrape: KE 편명 미발견 (body_len=%d)", len(body))
+        return []
+
+    # 카드 단위로 텍스트 — itinerary 자체에는 fare(매진/마일) 정보가 없으므로
+    # 매진/마일/원 단어를 포함하는 최소 ancestor 의 inner_text 를 가져온다.
+    cards = []
+    try:
+        cards = page.evaluate(
+            "Array.from(document.querySelectorAll(\"[class*='itinerary']\"))"
+            "  .filter(el => /KE\\d{4,5}/.test(el.innerText))"
+            "  .map(el => {"
+            "    let cur = el;"
+            "    for (let i=0; i<8 && cur; i++) {"
+            "      const t = cur.innerText || '';"
+            "      if (/매진|미운영|마일|\\d[\\d,]*\\s*원/.test(t)) return t;"
+            "      cur = cur.parentElement;"
+            "    }"
+            "    return el.innerText;"
+            "  })"
+            "  .filter(t => t.length > 60)"
+        ) or []
+    except Exception as e:
+        LOGGER.warning("DOM scrape evaluate 실패: %s", e)
+
+    LOGGER.info("DOM scrape: %d cards", len(cards))
+    if cards:
+        # 첫 카드 raw 출력 (매진 판정 디버깅)
+        LOGGER.info("DOM scrape sample card[0]: %r", cards[0][:600])
+
+    out: List[Dict] = []
+    seen_flight_cabin = set()
+    miles_mode = (cfg.air_fare_type == "miles")
+    cabin_pref = (cfg.air_cabin or "").lower()  # "" = ANY
+    unit = "마일" if miles_mode else "원"
+
+    # 검사할 cabin 후보
+    cabin_targets = []
+    if cabin_pref in ("", "economy"):
+        cabin_targets.append(("economy", "일반석"))
+    if cabin_pref in ("", "prestige"):
+        cabin_targets.append(("prestige", "프레스티지석"))
+    if cabin_pref in ("", "first"):
+        cabin_targets.append(("first", "퍼스트"))
+
+    for raw in cards:
+        m_flight = re.search(r"KE\d{4,5}", raw)
+        if not m_flight:
+            continue
+        flight_no = m_flight.group(0)
+        times = re.findall(r"\b(\d{2}:\d{2})\b", raw)
+        if len(times) < 2:
+            continue
+        dep_str, arr_str = times[0], times[1]
+        try:
+            h, mn = dep_str.split(":")
+            dep_time = time_cls(int(h), int(mn))
+        except ValueError:
+            continue
+        if not _within_window(dep_time, cfg, "depart"):
+            continue
+        if cfg.air_flight_no:
+            wants = [w.strip().replace(" ", "").upper()
+                     for w in cfg.air_flight_no.split(",") if w.strip()]
+            got = flight_no.upper()
+            if not any(w in got for w in wants):
+                continue
+
+        # cabin 별 박스 텍스트 — "일반석" 라벨 다음 60자 안의 청크에서 매진/가격 검사
+        for ckey, klabel in cabin_targets:
+            key = (flight_no, ckey)
+            if key in seen_flight_cabin:
+                continue
+            chunk_m = re.search(klabel + r"[\s\S]{0,80}", raw)
+            if not chunk_m:
+                continue
+            chunk = chunk_m.group(0)
+            if "매진" in chunk or "미운영" in chunk:
+                continue
+            if unit not in chunk:
+                continue
+            seen_flight_cabin.add(key)
+            out.append({
+                "flight_no": flight_no,
+                "origin": cfg.air_origin,
+                "dest": cfg.air_dest,
+                "depart": dep_str,
+                "arrive": arr_str,
+                "depart_dt": datetime.combine(cfg.air_depart_date, dep_time),
+                "cabin": ckey,
+                "cabin_label": klabel,
+                "fare_type": cfg.air_fare_type,
+                "status": "available",
+                "raw": f"{flight_no} {cfg.air_origin}→{cfg.air_dest} "
+                       f"{dep_str}→{arr_str} {klabel}"
+                       + (" [miles]" if miles_mode else " [cash]"),
+            })
+    return out
+
+
+def perform_search(client: KoreanAirSPAClient, cfg: AirConfig,
+                    force_warmup: bool = False) -> List[Dict]:
+    _ensure_select_flight_referer(client, cfg, force_warmup=force_warmup)
     payload = _build_payload(cfg)
     LOGGER.info("air-bounds payload (head): %s",
                 json.dumps(payload, ensure_ascii=False)[:300])
     data = _fetch_air_bounds(client, payload)
-    if data is None:
-        # 세션 만료(Akamai 쿠키 timeout) 일 가능성 — warm-up 으로 재진입 후 1 회 재시도.
-        from . import reserve as _reserve
-        LOGGER.info("air-bounds 실패 — warm-up 재호출 후 1 회 재시도")
-        try:
-            _reserve.warm_up_select_flight(client, cfg)
-            data = _fetch_air_bounds(client, payload)
-        except Exception as e:
-            LOGGER.warning("warm-up 재호출 실패: %s", e)
-    if not isinstance(data, dict):
-        return []
-    LOGGER.info("air-bounds top keys: %s", list(data.keys())[:10])
-    total_groups = len(data.get("airBoundGroups") or [])
-    candidates = _extract_candidates(data, cfg)
-    LOGGER.info("후보 추출: %d 건 (airBoundGroups=%d)", len(candidates), total_groups)
+    if isinstance(data, dict):
+        LOGGER.info("air-bounds top keys: %s", list(data.keys())[:10])
+        total_groups = len(data.get("airBoundGroups") or [])
+        candidates = _extract_candidates(data, cfg)
+        LOGGER.info("후보 추출 (API): %d 건 (airBoundGroups=%d)", len(candidates), total_groups)
+        if candidates:
+            return candidates
+    # API 가 403/empty → DOM fallback (Akamai 차단 시).
+    LOGGER.info("air-bounds API 응답 없음 → DOM scrape fallback")
+    candidates = _dom_scrape_candidates(client, cfg)
+    LOGGER.info("후보 추출 (DOM): %d 건", len(candidates))
     return candidates
 
 
