@@ -131,12 +131,8 @@ def main() -> int:
     )
 
     notifier = _build_notifier(cfg)
-    _notify(
-        notifier,
-        f"✈ KE 워처 부팅\n{cfg.air_origin}→{cfg.air_dest} {cfg.air_depart_date} "
-        f"times={times_str} cabin={cabin_label} fare={cfg.air_fare_type} "
-        f"trip={cfg.air_trip_type} mode={cfg.air_mode}",
-    )
+    _notify(notifier,
+            f"✈ 부팅 {cfg.air_origin}→{cfg.air_dest} {cfg.air_depart_date} {times_str}")
 
     launcher = ChromeLauncher(
         port=cfg.air_cdp_port,
@@ -152,6 +148,15 @@ def main() -> int:
 
     try:
         with KoreanAirSPAClient(cdp_url) as client:
+            # 로그인 필수 — search/reserve 모두 KE 세션이 있는 상태에서 동작한다.
+            # 익명 진행은 지원하지 않음 (skill 워크플로우 2단계와 일치).
+            try:
+                reserve_mod.ensure_logged_in(client, cfg)
+            except LoginError as e:
+                LOGGER.error("로그인 실패: %s", e)
+                _notify(notifier, f"❌ KE 로그인 실패\n{e}")
+                return 1
+
             # 위젯 워밍업 — Akamai 가 /booking/select-flight 직접 진입을 차단하므로
             # 홈 위젯 클릭 경로로 한 번 들어가 줘야 air-bounds XHR 가 200 을 준다.
             # roundtrip 은 워처 내부에서 outbound/return 두 oneway 검색으로 처리하므로
@@ -168,45 +173,36 @@ def main() -> int:
                     "초기 warm-up 실패 (%s) — main loop 에서 재시도", e
                 )
 
+            # 좌석은 풀렸다 닫혔다 반복하므로 한 번 잡았다고 끝낼 일이 아니다.
+            # 양쪽 leg 매 iteration 모두 폴링. 중복 알림은 seen_flights dedup 으로 차단.
+            # 종료는 오직 사용자 신호(SIGINT) — AIR_ONCE 는 검증/디버그 전용.
             seen_flights: set[str] = set()
             is_roundtrip = (cfg.air_trip_type == "roundtrip"
                             and cfg.air_return_date is not None)
-            out_found = False
-            ret_found = False
             last_leg: str | None = None
+            any_found = False
             while not _STOP:
                 try:
                     # ── outbound (갈때) ──
                     out_cfg = cfg.as_oneway_outbound()
-                    if not out_found:
-                        force = (last_leg == "return")
-                        out_found = run_once(client, out_cfg, notifier, seen_flights,
-                                              leg="out", force_warmup=force)
-                        last_leg = "out"
+                    force = (last_leg == "return")
+                    if run_once(client, out_cfg, notifier, seen_flights,
+                                 leg="out", force_warmup=force):
+                        any_found = True
+                    last_leg = "out"
 
                     # ── return (올때) ──
-                    if is_roundtrip and not ret_found:
+                    if is_roundtrip:
                         ret_cfg = cfg.swap_for_return()
                         force = (last_leg == "out")  # leg 전환 → 위젯 재셋업
-                        ret_found = run_once(client, ret_cfg, notifier, seen_flights,
-                                              leg="return", force_warmup=force)
+                        if run_once(client, ret_cfg, notifier, seen_flights,
+                                     leg="return", force_warmup=force):
+                            any_found = True
                         last_leg = "return"
 
-                    # 종료 조건 (search 모드)
-                    if cfg.air_mode == "search":
-                        if not is_roundtrip and out_found:
-                            LOGGER.info("oneway 알림 완료 — 종료")
-                            return 0
-                        if is_roundtrip and out_found and ret_found:
-                            LOGGER.info("갈때/올때 모두 알림 완료 — 종료")
-                            return 0
-
-                    done = False  # reserve 모드 호환용 (아래 if done: 진입 안 함)
-                    if done:
-                        return 0
                     if cfg.air_once:
-                        LOGGER.info("AIR_ONCE=true → 종료")
-                        return 1
+                        LOGGER.info("AIR_ONCE=true → 1회만 실행 후 종료 (debug)")
+                        return 0 if any_found else 1
                     _sleep_with_jitter(float(cfg.air_poll_min), float(cfg.air_poll_max))
                 except BotGuardDetected as e:
                     LOGGER.warning("BotGuard: %s — backoff", e)

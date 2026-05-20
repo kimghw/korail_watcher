@@ -87,7 +87,7 @@ class AirConfig(BaseModel):
     air_tolerance_min: int = Field(30, alias="AIR_TOLERANCE_MIN")
     air_flight_no: str = Field("", alias="AIR_FLIGHT_NO")
 
-    # ─ Credentials (reserve 모드에서만 필수) ─
+    # ─ Credentials (search/reserve 모두 필수 — 익명 모드 미지원) ─
     air_user: str = Field("", alias="AIR_USER")
     air_pass: str = Field("", alias="AIR_PASS")
 
@@ -277,11 +277,10 @@ class AirConfig(BaseModel):
                 raise ValueError("AIR_RETURN_TIMES required for roundtrip")
             if values.air_return_date < values.air_depart_date:
                 raise ValueError("AIR_RETURN_DATE must be >= AIR_DEPART_DATE")
-        if values.air_mode == "reserve":
-            if not values.air_user:
-                raise ValueError("AIR_USER required for reserve mode")
-            if not values.air_pass:
-                raise ValueError("AIR_PASS required for reserve mode")
+        if not values.air_user:
+            raise ValueError("AIR_USER required — 익명 모드 미지원, 로그인 필수")
+        if not values.air_pass:
+            raise ValueError("AIR_PASS required — 익명 모드 미지원, 로그인 필수")
         return values
 
 

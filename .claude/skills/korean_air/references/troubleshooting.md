@@ -175,6 +175,7 @@ DOM scrape sample card[0]: <KE1114 06:55 5,000 마일 ...>
 ## 사전 조건 (이 모든 fix 가 효과를 보려면)
 
 1. `.env` 의 `DB_PATH` 가 절대 경로 (위 §1).
-2. CDP 9446 Chrome 이 사용자 프로필로 로그인 상태.
-3. 사용자가 한 번 위젯 → 검색 → select-award-flight (cash 면 select-flight) 페이지에 진입해 둠. SPA state 유지하는 동안 워처는 reload-only.
-4. 페이지가 home 으로 redirect 되면 워처가 `_reserve.warm_up_select_flight` 1회 호출로 자동 복귀 시도. 그것도 실패하면 사용자에게 알림 (현재는 backoff retry).
+2. **`AIR_USER` / `AIR_PASS` 가 채워져 있음** — 워처는 부팅 시 `ensure_logged_in()` 으로 자동 로그인한다. 익명 모드 미지원 (config validator 가 빈 값이면 즉시 reject).
+3. CDP 9446 Chrome 이 사용자 프로필로 띄워져 있음. 워처가 ID/PW 로 로그인하므로 사전에 수동 로그인되어 있을 필요는 없음.
+4. 사용자가 한 번 위젯 → 검색 → select-award-flight (cash 면 select-flight) 페이지에 진입해 둠. SPA state 유지하는 동안 워처는 reload-only.
+5. 페이지가 home 으로 redirect 되면 워처가 `_reserve.warm_up_select_flight` 1회 호출로 자동 복귀 시도. 그것도 실패하면 사용자에게 알림 (현재는 backoff retry).
