@@ -144,17 +144,26 @@ def attempt_reservation(
     is_first = "특실" in (target.get("seat_class") or "")
     seat_key = "특실" if is_first else "일반실"
     depart_str = target.get("depart", "")  # 'HH:MM'
+    status_kind = (target.get("status_kind") or "reserve").lower()
+    LOGGER.info("status_kind=%s — 예매/예약대기/입석 분기", status_kind)
 
-    # ─── STEP 1: 결과 row 의 가격 anchor 클릭 → row 선택 (파란 하이라이트) ───
-    # has_not_text 가 substring 매칭이라 "매진" 으로 필터하면 "매진임박" 도 같이 제외됨.
-    # 정규식 (?!임) 으로 "매진" 뒤에 "임" 없는 경우만 제외 → 매진임박 row(예약 가능)는 통과.
+    # ─── STEP 1: 결과 row 의 anchor 클릭 → row 선택 (파란 하이라이트) ───
+    # status_kind 별 anchor text 다름:
+    #   reserve  : "일반실23,700원5%적립"  (예약 가능 row 만 "일반실" 텍스트 있음)
+    #   waitlist : "예약대기"               (매진된 row 는 priceBox text 가 짧음 — "일반실" 단어 없음)
+    #   standing : "입석 + 좌석"            (동일)
     import re as _re
-    loc = (
-        page.locator("a")
-        .filter(has_text=seat_key)
-        .filter(has_text="원")
-        .filter(has_not_text=_re.compile(r"매진(?!임)"))
-    )
+    if status_kind == "waitlist":
+        loc = page.locator("a").filter(has_text="예약대기")
+    elif status_kind == "standing":
+        loc = page.locator("a").filter(has_text="입석")
+    else:
+        loc = (
+            page.locator("a")
+            .filter(has_text=seat_key)
+            .filter(has_text="원")
+            .filter(has_not_text=_re.compile(r"매진(?!임)"))
+        )
     n = loc.count()
     chosen = None
     for i in range(n):
@@ -193,14 +202,21 @@ def attempt_reservation(
     human_pause(0.8, 1.4)
     dismiss_all_popups(client.context)
 
-    # ─── STEP 2: 하단 "예매" 버튼 (button.reservbtn) 클릭 ───
-    book_btn = page.locator(S.BOOK_NOW_BUTTON).first
+    # ─── STEP 2: 하단 status_kind 별 액션 버튼 클릭 ───
+    if status_kind == "waitlist":
+        book_sel, book_label = S.WAITLIST_BUTTON, "예약대기신청"
+    elif status_kind == "standing":
+        book_sel, book_label = S.STANDING_BUTTON, "입석+좌석 예매"
+    else:
+        book_sel, book_label = S.BOOK_NOW_BUTTON, "예매"
+
+    book_btn = page.locator(book_sel).first
     if book_btn.count() == 0:
-        raise SiteLayoutChanged("예매 버튼(button.reservbtn) 미발견 — row 선택이 안 됐을 수도")
+        raise SiteLayoutChanged(f"{book_label} 버튼 미발견 — row 선택이 안 됐을 수도 (selector={book_sel})")
 
     try:
         if book_btn.is_disabled():
-            raise UserActionRequired("예매 버튼이 비활성 — row 선택 상태가 풀렸을 수 있음")
+            raise UserActionRequired(f"{book_label} 버튼이 비활성 — row 선택 상태가 풀렸을 수 있음")
     except UserActionRequired:
         raise
     except Exception:
@@ -208,9 +224,9 @@ def attempt_reservation(
 
     try:
         human_click(book_btn)
-        LOGGER.info("'예매' 버튼 클릭 (button.reservbtn)")
+        LOGGER.info("'%s' 버튼 클릭 (selector=%s)", book_label, book_sel)
     except PWTimeoutError as e:
-        raise SiteLayoutChanged(f"예매 버튼 클릭 실패: {e}") from e
+        raise SiteLayoutChanged(f"{book_label} 버튼 클릭 실패: {e}") from e
 
     # 예매 클릭 직후 popup window (이용안내, 본인인증 안내 등) 여러 번 뜰 수 있음.
     # 1초 간격으로 3회 polling 하면서 모든 popup 의 '확인' 자동 클릭.
@@ -234,12 +250,21 @@ def attempt_reservation(
     url = page.url or ""
     LOGGER.info("예매 클릭 후 url=%s", url)
 
-    success_kw = ("결제하기", "결제 수단", "예약 완료", "예약완료", "신용카드", "카드번호")
+    if status_kind == "waitlist":
+        success_kw = ("예약대기 신청", "예약대기신청", "대기 신청", "대기번호", "대기 등록", "대기등록")
+        ok_label = "✅ 예약대기 신청 단계 도달"
+    elif status_kind == "standing":
+        success_kw = ("결제하기", "결제 수단", "예약 완료", "예약완료", "신용카드", "카드번호", "입석")
+        ok_label = "✅ 입석+좌석 예매 단계 도달"
+    else:
+        success_kw = ("결제하기", "결제 수단", "예약 완료", "예약완료", "신용카드", "카드번호")
+        ok_label = "✅ 결제 직전 단계 도달 — 예약 흐름 정상 통과"
+
     if any(kw in html for kw in success_kw):
-        LOGGER.info("✅ 결제 직전 단계 도달 — 예약 흐름 정상 통과")
+        LOGGER.info(ok_label)
         return
 
-    LOGGER.warning("예매 클릭 후 결제 페이지 키워드 미감지 — url=%s", url)
+    LOGGER.warning("%s 클릭 후 성공 키워드 미감지 — url=%s", book_label, url)
 
 
 __all__ = ["ensure_logged_in", "attempt_reservation"]

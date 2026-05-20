@@ -77,9 +77,10 @@ def run_once(
         return False
 
     best = candidates[0]
+    kind = (best.get("status_kind") or "reserve")
     info_line = (
         f"{best['origin']}→{best['dest']} {best['date']} {best['depart']} "
-        f"[{best['seat_class']}] {best['status']}"
+        f"[{best['seat_class']}] {best['status']} (kind={kind})"
     )
     LOGGER.info("후보 발견: %s", info_line)
     _notify(notifier, f"후보 발견\n{info_line}")
@@ -108,6 +109,12 @@ def run_once(
     except LoginError as e:
         LOGGER.error("Login error during reservation: %s", e)
         _notify(notifier, f"❌ 로그인 오류 (예약 단계)\n{e}")
+        return True
+
+    # 예약대기는 결제 단계 없음 — kind=waitlist 면 PAYMENT_MODE 와 무관하게 skip.
+    if kind == "waitlist":
+        LOGGER.info("kind=waitlist — 결제 단계 없음, 예약대기 신청 완료 상태")
+        _notify(notifier, "ℹ 예약대기 신청 완료 — 빈자리 생기면 코레일에서 알림. 후속은 수동 결제.")
         return True
 
     # 예약 단계 OK — 결제까지 연속 진행 (config 가 허용한 경우만)

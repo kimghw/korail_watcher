@@ -73,6 +73,23 @@ MACRO_NOTICE_KEYWORDS = (
 )
 MODAL_CONFIRM_BUTTON = "button:has-text('확인')"
 
+# 광고/공지 모달 (예: "광명→천안아산 KTX 서행 알림" 운영기간성 공지).
+# 매크로 차단과 무관 — body 에 "창닫기" / "그만보기" / "알림" 같은 키워드 + 닫기 버튼.
+NOTICE_MODAL_KEYWORDS = (
+    "창닫기",
+    "그만보기",
+)
+NOTICE_MODAL_DISMISS_BUTTON = (
+    "button.btn_pop-close, "
+    "button:has-text('창닫기'), "
+    "a:has-text('창닫기')"
+)
+# 모달 안의 "N일간 그만보기" 체크박스 → 체크 후 닫기 누르면 cookie 로 24시간 안 뜸.
+NOTICE_MODAL_HIDE_TODAY_CHECKBOX = (
+    "label:has-text('그만보기'), "
+    "input[id^='popClose'][type='checkbox']"
+)
+
 # ─────────────────── 로그인 폼 ───────────────────
 LOGIN_ID_INPUT = "input#id"
 LOGIN_PW_INPUT = "input#password"
@@ -103,6 +120,10 @@ SEAT_SELECTION_ANCHOR_SPECIAL = (
 # 'reserv_btn' (밑줄) 은 "예매 숨기기" 토글 버튼이라 다름.
 BOOK_NOW_BUTTON = "button.reservbtn"
 SEAT_SELECT_BUTTON = "button:has-text('좌석선택')"  # 직접 좌석 고를 때
+# 매진 row 선택 시 활성화 (좌석 매진 시 대기 명단 등록).
+WAITLIST_BUTTON = "button:has-text('예약대기신청')"
+# "입석 + 좌석" row 선택 시 활성화.
+STANDING_BUTTON = "button:has-text('입석+좌석 예매'), button:has-text('입석+좌석예매')"
 
 # Legacy aliases (호환)
 RESERVE_BUTTON_GENERAL = SEAT_SELECTION_ANCHOR_GENERAL

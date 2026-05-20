@@ -30,6 +30,7 @@ from . import selectors as S
 from .client import (
     KorailSPAClient,
     dismiss_macro_notice,
+    dismiss_notice_modal,
     human_click,
     human_mouse,
     human_pause,
@@ -99,14 +100,25 @@ def _select_station(page: Page, slot: str, station: str) -> None:
 
 
 def _read_current_ym(page: Page) -> Optional[tuple[int, int]]:
+    """현재 visible(slick-active) 슬라이드의 datepicker label 에서 YYYY-MM 추출.
+    label 형식: "2026. 06." (점 구분) 또는 "2026년 06월" 둘 다 매칭."""
     raw = page.evaluate(
         """() => {
             const root = document.querySelector('.layerWrap.type_date-pop_wrap');
             if (!root) return null;
-            const cands = [...root.querySelectorAll('.slick-active'), ...root.querySelectorAll('.datepk_wrap'), root];
-            for (const el of cands) {
-                const t = el.textContent || '';
-                const m = t.match(/(20\\d{2})\\s*년\\s*(\\d{1,2})\\s*월/);
+            const re = /(20\\d{2})\\s*[.\\uB144]\\s*(\\d{1,2})/;  // YYYY [. 또는 년] MM
+            // visible slide 안의 .datepicker .date 우선
+            const active = root.querySelectorAll('.slick-active');
+            for (const el of active) {
+                const dp = el.querySelector('.datepicker .date') || el;
+                const t = (dp.textContent || '').trim();
+                const m = t.match(re);
+                if (m) return {y: +m[1], mo: +m[2]};
+            }
+            // fallback: 모든 datepicker .date
+            for (const dp of root.querySelectorAll('.datepicker .date')) {
+                const t = (dp.textContent || '').trim();
+                const m = t.match(re);
                 if (m) return {y: +m[1], mo: +m[2]};
             }
             return null;
@@ -117,22 +129,40 @@ def _read_current_ym(page: Page) -> Optional[tuple[int, int]]:
     return int(raw["y"]), int(raw["mo"])
 
 
-def _click_day(page: Page, day: int) -> bool:
+def _click_day(page: Page, day: int, year: Optional[int] = None, month: Optional[int] = None) -> bool:
+    """day 셀 클릭. slick carousel 안에 여러 월 datepicker 가 mount 돼 있어도
+    year/month 가 주어지면 그 월 헤더 가진 카드 안의 day 만 클릭."""
     return bool(page.evaluate(
-        """(d) => {
-            const root = document.querySelector('.layerWrap.type_date-pop_wrap .datepicker');
-            if (!root) return false;
-            for (const td of root.querySelectorAll('tbody td')) {
-                if (td.classList.contains('disabled')) continue;
-                const a = td.querySelector('a');
-                if (!a || a.getAttribute('aria-disabled') === 'true') continue;
-                const span = a.querySelector('.day');
-                const txt = span ? span.textContent.trim() : a.textContent.trim();
-                if (txt === String(d)) { a.click(); return true; }
-            }
-            return false;
+        """([d, y, mo]) => {
+            const wrap = document.querySelector('.layerWrap.type_date-pop_wrap');
+            if (!wrap) return false;
+            // 후보 카드: slick-slide, datepk_wrap, 또는 wrap 전체 (단일 datepicker 케이스)
+            const cards = [...wrap.querySelectorAll('.slick-slide'), ...wrap.querySelectorAll('.datepk_wrap')];
+            const search = (root) => {
+                if (y && mo) {
+                    const headerEl = root.querySelector('.datepicker .date') || root;
+                    const t = (headerEl.textContent || '').trim();
+                    const m = t.match(/(20\\d{2})\\s*[.\\uB144]\\s*(\\d{1,2})/);
+                    if (!m || +m[1] !== y || +m[2] !== mo) return false;
+                }
+                const dp = root.querySelector('.datepicker') || root;
+                const tbody = dp.querySelector('tbody');
+                if (!tbody) return false;
+                for (const td of tbody.querySelectorAll('td')) {
+                    if (td.classList.contains('disabled')) continue;
+                    const a = td.querySelector('a');
+                    if (!a || a.getAttribute('aria-disabled') === 'true') continue;
+                    const span = a.querySelector('.day');
+                    const txt = span ? span.textContent.trim() : a.textContent.trim();
+                    if (txt === String(d)) { a.click(); return true; }
+                }
+                return false;
+            };
+            for (const c of cards) { if (search(c)) return true; }
+            // fallback: month 헤더 검사 없이 wrap 전체에서 첫 매칭
+            return search(wrap);
         }""",
-        day,
+        [day, year, month],
     ))
 
 
@@ -151,6 +181,8 @@ def _click_hour(page: Page, hour: int) -> bool:
 
 
 def _set_date(page: Page, target: _date, hour: int) -> None:
+    # picker 클릭이 공지 모달 (ReactModalPortal) 에 가로채일 수 있어 매번 dismiss 시도
+    dismiss_notice_modal(page)
     # 이미 같은 값이면 picker 안 열음 (반복 자동화 시그널 회피).
     cur = _input_value(page, S.DATE_INPUT)
     want_prefix = target.isoformat()
@@ -186,7 +218,46 @@ def _set_date(page: Page, target: _date, hour: int) -> None:
         except Exception:
             break
 
-    if not _click_day(page, target.day):
+    if not _click_day(page, target.day, target.year, target.month):
+        # 진단: picker DOM 일부 dump
+        try:
+            dump = page.evaluate(
+                """() => {
+                    const w = document.querySelector('.layerWrap.type_date-pop_wrap');
+                    if (!w) return 'WRAP_NULL';
+                    const dps = [...w.querySelectorAll('.datepicker')];
+                    const summary = dps.map(dp => {
+                        const dateLabel = (dp.querySelector('.date')?.textContent || '').trim();
+                        const tds = [...dp.querySelectorAll('tbody td')];
+                        const td_cls_sample = tds.slice(0, 8).map(t => t.className || '');
+                        const a_sample = tds.slice(0, 8).map(t => {
+                            const a = t.querySelector('a');
+                            if (!a) return 'NOA';
+                            return JSON.stringify({txt: (a.textContent||'').trim(), ariaDis: a.getAttribute('aria-disabled'), cls: a.className || ''});
+                        });
+                        // find day=1 td across this dp
+                        let day1_info = 'NONE';
+                        for (const td of tds) {
+                            const a = td.querySelector('a');
+                            const txt = (a?.textContent || td.textContent || '').trim();
+                            if (txt === '1') {
+                                day1_info = JSON.stringify({
+                                    td_cls: td.className || '',
+                                    a_present: !!a,
+                                    a_aria: a ? a.getAttribute('aria-disabled') : null,
+                                    a_cls: a ? (a.className || '') : null,
+                                });
+                                break;
+                            }
+                        }
+                        return { label: dateLabel, td_count: tds.length, td_cls_sample, a_sample, day1_info };
+                    });
+                    return JSON.stringify(summary, null, 0).slice(0, 4000);
+                }"""
+            )
+        except Exception as e:
+            dump = f"DUMP_ERR:{e}"
+        LOGGER.warning("date picker %d일 미발견 — DOM dump: %s", target.day, dump)
         try:
             page.locator(S.DATE_POPUP_CANCEL).first.click(timeout=1500)
         except Exception:
@@ -284,7 +355,7 @@ def _parse_result_rows(page: Page) -> List[Dict[str, Any]]:
                     const cls = box.className || '';
                     const txt = (box.textContent || '').trim();
                     const soldOutSoon = /sold_out_soon/.test(cls);
-                    // soldOut: class 에 'sold_out' 있고 'sold_out_soon' 아님
+                    // soldOut: class 에 'sold_out' 있고 'sold_out_soon' 아님 (sold_out_wait 는 텍스트 기반으로 판정)
                     const soldOut = /\\bsold_out\\b/.test(cls) && !soldOutSoon;
                     const hasPrice = /\\d+,\\d+원/.test(txt);
                     return {
@@ -295,14 +366,14 @@ def _parse_result_rows(page: Page) -> List[Dict[str, Any]]:
                         has_price: hasPrice,
                     };
                 };
-                // 일반실 = .price_box.gen
-                const genBox = el.querySelector('.price_box.gen');
-                // 특실 = .price_box 중 .gen 없는 것 (없을 수도 있음)
-                const allBoxes = el.querySelectorAll('.price_box');
+                // priceBox 위치 기반: 좌측(첫 번째) = 일반실, 우측(두 번째) = 특실.
+                // class 'gen' 은 예약 가능 row 에만 붙고 매진/wait/sold_out_wait row 에는 빠짐.
+                const allBoxes = Array.from(el.querySelectorAll('.price_box'));
+                let genBox = allBoxes.find(b => b.classList.contains('gen')) || allBoxes[0] || null;
                 let specBox = null;
-                allBoxes.forEach(b => {
-                    if (!b.classList.contains('gen')) specBox = b;
-                });
+                for (const b of allBoxes) {
+                    if (b !== genBox) { specBox = b; break; }
+                }
                 out.push({
                     text: t,
                     gen: parseBox(genBox),
@@ -352,6 +423,14 @@ def navigate_to_search(client: KorailSPAClient) -> Page:
         raise SiteLayoutChanged("검색 폼 selector 미감지")
     # 진입 직후 매크로 안내 모달 있으면 dismiss
     dismiss_macro_notice(page)
+    # 운영기간성 공지 모달은 React 비동기 mount — 최대 4초 polling.
+    for _ in range(8):
+        if dismiss_notice_modal(page):
+            break
+        try:
+            page.wait_for_timeout(500)
+        except Exception:
+            break
     return page
 
 
@@ -475,9 +554,18 @@ def perform_search(
                 continue
             status_window = status_col[:40].replace(" ", "")
             without_imminent = status_window.replace("매진임박", "")
-            if "매진" in without_imminent:
-                continue
-            if not any(ok in status_window for ok in ("원", "예약하기", "좌석선택", "예매", "입석")):
+            has_price = ("원" in status_window) or ("예약하기" in status_window) or ("좌석선택" in status_window) or ("예매" in status_window)
+            has_waitlist = "예약대기" in status_window
+            has_standing = "입석" in status_window
+            has_soldout = "매진" in without_imminent
+            # status_kind 우선순위: 가격(예약 가능) > 예약대기 > 입석. 셋 다 없으면 skip.
+            if has_price and not has_soldout:
+                kind = "reserve"
+            elif has_waitlist:
+                kind = "waitlist"
+            elif has_standing:
+                kind = "standing"
+            else:
                 continue
             candidates.append({
                 "origin": config.ktxa_origin,
@@ -488,6 +576,7 @@ def perform_search(
                 "train_name": r["train_name"],
                 "seat_class": seat_label,
                 "status": status_col,
+                "status_kind": kind,
                 "_row_index": r["_row_index"],
                 "_raw": r["depart_raw"],
             })

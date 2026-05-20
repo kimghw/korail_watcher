@@ -293,6 +293,47 @@ def dismiss_macro_notice(page: Page) -> bool:
     return False
 
 
+def dismiss_notice_modal(page: Page) -> bool:
+    try:
+        body_txt = page.locator("body").inner_text(timeout=1500)
+    except Exception:
+        return False
+    if not any(kw in body_txt for kw in S.NOTICE_MODAL_KEYWORDS):
+        return False
+    # 1) "N일간 그만보기" 체크박스 있으면 먼저 체크 — 닫으면 cookie 로 24시간 안 뜸.
+    try:
+        chks = page.locator(S.NOTICE_MODAL_HIDE_TODAY_CHECKBOX)
+        for i in range(chks.count()):
+            c = chks.nth(i)
+            try:
+                if c.is_visible():
+                    c.click(timeout=1500)
+                    LOGGER.info("공지 모달 '그만보기' 체크")
+                    time.sleep(0.2)
+                    break
+            except Exception:
+                continue
+    except Exception:
+        pass
+    # 2) 닫기 버튼 클릭
+    btns = page.locator(S.NOTICE_MODAL_DISMISS_BUTTON)
+    try:
+        n = btns.count()
+    except Exception:
+        return False
+    for i in range(n):
+        b = btns.nth(i)
+        try:
+            if b.is_visible():
+                b.click(timeout=2000)
+                LOGGER.info("공지 모달 '창닫기' 클릭 dismiss")
+                time.sleep(random.uniform(0.6, 1.0))
+                return True
+        except Exception:
+            continue
+    return False
+
+
 def dismiss_any_modal(page: Page) -> bool:
     """일반적인 안내 모달의 visible '확인' 버튼 클릭. 매크로 키워드 검사 없음."""
     btns = page.locator(S.MODAL_CONFIRM_BUTTON)
