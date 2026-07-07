@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from datetime import date, datetime, time
 from pathlib import Path
-from typing import Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
@@ -16,6 +16,10 @@ ENV_FILES = (Path(".env.ktx"), Path("env") / ".env", Path(".env"))
 
 class ConfigError(RuntimeError):
     """Raised when configuration validation fails."""
+
+
+# 인원선택 팝업의 승객 유형 (korail SPA, CDP probe 2026-07-07)
+PASSENGER_TYPES = ("어른", "어린이", "유아", "경로", "중증장애인", "경증장애인", "국가유공자")
 
 
 def _load_env_files() -> None:
@@ -49,6 +53,9 @@ class KTXAConfig(BaseModel):
     ktxa_date: date = Field(alias="KTXA_DATE")
     ktxa_times: List[time] = Field(alias="KTXA_TIMES")
     ktxa_passengers: int = Field(1, alias="KTXA_PASSENGERS")
+    # 승객 유형: 단일 유형명("경로") 이면 KTXA_PASSENGERS 명 전원 그 유형.
+    # "어른:1,경로:1" 형식이면 유형별 인원 직접 지정 (KTXA_PASSENGERS 무시).
+    ktxa_passenger_type: str = Field("어른", alias="KTXA_PASSENGER_TYPE")
     ktxa_seat_class: str = Field("", alias="KTXA_SEAT_CLASS")
     ktxa_train_type: str = Field("KTX", alias="KTXA_TRAIN_TYPE")
     ktxa_tolerance_min: int = Field(0, alias="KTXA_TOLERANCE_MIN")
@@ -166,6 +173,33 @@ class KTXAConfig(BaseModel):
     def _seat_class_opt(cls, v):
         return (v or "").strip()
 
+    @field_validator("ktxa_passenger_type", mode="after")
+    @classmethod
+    def _passenger_type(cls, v):
+        v = (v or "").replace(" ", "") or "어른"
+        names = [p.partition(":")[0] for p in v.split(",")] if ":" in v else [v]
+        for name in names:
+            if name not in PASSENGER_TYPES:
+                raise ValueError(
+                    f"KTXA_PASSENGER_TYPE 유형 오류: {name!r} (가능: {', '.join(PASSENGER_TYPES)})"
+                )
+        if ":" in v:
+            for p in v.split(","):
+                cnt = p.partition(":")[2]
+                if not cnt.isdigit() or int(cnt) < 0:
+                    raise ValueError(f"KTXA_PASSENGER_TYPE 인원 오류: {p!r} (예: 어른:1,경로:1)")
+        return v
+
+    def passenger_counts(self) -> Dict[str, int]:
+        """유형별 인원 {유형: N, ...}. 명시 안 된 유형은 0명으로 간주."""
+        if ":" in self.ktxa_passenger_type:
+            out: Dict[str, int] = {}
+            for p in self.ktxa_passenger_type.split(","):
+                name, _, cnt = p.partition(":")
+                out[name] = out.get(name, 0) + int(cnt)
+            return {k: n for k, n in out.items() if n > 0}
+        return {self.ktxa_passenger_type: self.ktxa_passengers}
+
     @field_validator("ktxa_user", "ktxa_pass", mode="after")
     @classmethod
     def _strip_opt(cls, v):
@@ -179,6 +213,8 @@ class KTXAConfig(BaseModel):
             raise ValueError("KTXA_POLL_MAX must be >= KTXA_POLL_MIN")
         if values.ktxa_cdp_port <= 0 or values.ktxa_cdp_port > 65535:
             raise ValueError("KTXA_CDP_PORT out of range")
+        if sum(values.passenger_counts().values()) <= 0:
+            raise ValueError("승객 인원 합이 0명 (KTXA_PASSENGERS / KTXA_PASSENGER_TYPE 확인)")
         if values.ktxa_mode not in {"search", "reserve"}:
             raise ValueError("KTXA_MODE must be 'search' or 'reserve'")
         if values.ktxa_mode == "reserve":
@@ -196,6 +232,7 @@ _RAIL_SHARED_MAP = (
     ("RAIL_TIMES", "KTXA_TIMES"),
     ("RAIL_TIME_WINDOW", "KTXA_TIME_WINDOW"),
     ("RAIL_PASSENGERS", "KTXA_PASSENGERS"),
+    ("RAIL_PASSENGER_TYPE", "KTXA_PASSENGER_TYPE"),
     ("RAIL_SEAT_CLASS", "KTXA_SEAT_CLASS"),
     ("RAIL_TOLERANCE_MIN", "KTXA_TOLERANCE_MIN"),
 )

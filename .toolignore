@@ -1,0 +1,3 @@
+# toolkit 공유 복사 제외 목록 (머신별 실값 — chrome-bind SKILL.md 참조)
+.claude/skills/chrome-bind/chrome_binding.yaml
+KRS_ECLASS_CACHE/

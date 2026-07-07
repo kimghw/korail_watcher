@@ -286,6 +286,129 @@ def _set_date(page: Page, target: _date, hour: int) -> None:
     LOGGER.info("출발일 적용 OK: %s", cur)
 
 
+def _read_passenger_counts(page: Page) -> Optional[Dict[str, int]]:
+    """열린 인원선택 팝업의 {li 라벨: 현재 인원}. 팝업 미발견 시 None."""
+    return page.evaluate(
+        """() => {
+            const root = document.querySelector('.layerWrap.personnel_pop_wrap');
+            if (!root) return null;
+            const out = {};
+            for (const li of root.querySelectorAll('.ticketInfo_bottom li')) {
+                const label = (li.querySelector('p')?.textContent || '').trim();
+                const span = li.querySelector('.flo_right span');
+                if (label && span) out[label] = parseInt(span.textContent.trim(), 10) || 0;
+            }
+            return out;
+        }"""
+    )
+
+
+def _click_passenger_step(page: Page, label: str, up: bool) -> bool:
+    """라벨(prefix 매칭) li 의 증가/감소 버튼 1회 클릭. disabled/미발견이면 False."""
+    return bool(page.evaluate(
+        """([label, up]) => {
+            const root = document.querySelector('.layerWrap.personnel_pop_wrap');
+            if (!root) return false;
+            for (const li of root.querySelectorAll('.ticketInfo_bottom li')) {
+                const t = (li.querySelector('p')?.textContent || '').trim();
+                if (!t.startsWith(label)) continue;
+                const btn = li.querySelector('.flo_right button.' + (up ? 'up_num' : 'down_num'));
+                if (!btn || btn.disabled) return false;
+                btn.click();
+                return true;
+            }
+            return false;
+        }""",
+        [label, up],
+    ))
+
+
+def _set_passengers(page: Page, config: KTXAConfig) -> None:
+    """인원선택 팝업에서 유형별 인원을 config 값에 맞춘다 (예: 경로 1명).
+
+    폼의 '총 N명' 라벨은 합계만 보여서 구성(어른/경로 등)은 팝업을 열어야만
+    확인 가능 → 폼 진입 시 1회 열어 검증, 이미 일치하면 취소로 닫는다.
+    """
+    desired_by_type = config.passenger_counts()
+
+    def want(label: str) -> int:
+        for t, n in desired_by_type.items():
+            if label.startswith(S.PASSENGER_TYPE_PREFIX[t]):
+                return n
+        return 0
+
+    dismiss_notice_modal(page)
+    LOGGER.info("인원 확인: %s", desired_by_type)
+    human_click(page.locator(S.PEOPLE_BTN).first)
+    try:
+        page.wait_for_selector(S.PEOPLE_POPUP, timeout=8000)
+    except PWTimeoutError:
+        raise SiteLayoutChanged("인원선택 팝업 안 뜸")
+    human_pause(0.4, 0.8)
+
+    cur = _read_passenger_counts(page)
+    if not cur:
+        raise SiteLayoutChanged("인원선택 팝업 카운트 파싱 실패")
+
+    if all(cnt == want(label) for label, cnt in cur.items()):
+        LOGGER.info("인원 이미 일치 — 팝업 취소로 닫음")
+        try:
+            page.locator(S.PEOPLE_POPUP_CANCEL).first.click(timeout=3000)
+        except Exception:
+            pass
+        human_pause(0.3, 0.6)
+        return
+
+    LOGGER.info("인원 조정: 현재=%s → 목표=%s", cur, desired_by_type)
+    # 증가 먼저 → 감소: 총원이 0명이 되는 순간(감소 버튼 disabled)을 피한다.
+    for up in (True, False):
+        for label, cnt in (_read_passenger_counts(page) or {}).items():
+            delta = want(label) - cnt
+            if (delta > 0) is not up or delta == 0:
+                continue
+            for _ in range(abs(delta)):
+                if not _click_passenger_step(page, label, up):
+                    raise SiteLayoutChanged(
+                        f"인원 {'증가' if up else '감소'} 버튼 클릭 실패: {label}"
+                    )
+                human_pause(0.15, 0.4)
+
+    cur = _read_passenger_counts(page) or {}
+    bad = {l: c for l, c in cur.items() if c != want(l)}
+    if bad:
+        raise SiteLayoutChanged(f"인원 적용 전 검증 실패: {bad}")
+    human_pause(0.3, 0.6)
+
+    try:
+        page.locator(S.PEOPLE_POPUP_APPLY).first.click(timeout=4000)
+    except Exception as e:
+        raise SiteLayoutChanged(f"인원 팝업 적용 실패: {e}") from e
+    # 비어른 구성이면 "선택하신 인원이 확실한가요?" 확인 모달이 한 번 더 뜬다 → 예
+    try:
+        yes = page.locator(S.PEOPLE_CONFIRM_YES).first
+        yes.wait_for(state="visible", timeout=3000)
+        human_pause(0.3, 0.7)
+        yes.click(timeout=3000)
+        LOGGER.info("인원 확인 모달 '예' 클릭")
+    except Exception:
+        pass  # 어른 구성 등 모달이 없으면 그대로 진행
+    try:
+        page.wait_for_selector(S.PEOPLE_POPUP, state="hidden", timeout=4000)
+    except Exception:
+        pass
+    human_pause(0.3, 0.7)
+
+    total = sum(desired_by_type.values())
+    try:
+        label_txt = (page.locator(S.PEOPLE_BTN).first.inner_text(timeout=1500) or "").strip()
+    except Exception:
+        label_txt = ""
+    if label_txt and str(total) not in label_txt:
+        # 유아는 '총 N명' 합계에서 빠질 수 있어 경고만.
+        LOGGER.warning("인원 라벨 불일치(계속 진행): 기대 총 %d명, 라벨=%r", total, label_txt)
+    LOGGER.info("인원 적용 OK: %s (라벨: %s)", desired_by_type, label_txt or "?")
+
+
 # ─────────────────── 결과 처리 ───────────────────
 
 def _click_train_type_tab(page: Page, train_type: str) -> None:
@@ -441,6 +564,8 @@ def fill_search_form(page: Page, config: KTXAConfig) -> None:
         human_pause(1.0, 2.0)
     _set_date(page, config.ktxa_date, hour=hour)
     human_pause(1.0, 2.0)
+    _set_passengers(page, config)
+    human_pause(0.8, 1.4)
 
 
 def submit_search(page: Page) -> List[Dict[str, Any]]:
@@ -518,6 +643,9 @@ def perform_search(
             # 날짜만 따로 확인 (역은 같지만 날짜 다를 수 있음)
             hour = config.ktxa_times[0].hour if config.ktxa_times else 8
             _set_date(page, config.ktxa_date, hour=hour)
+            human_pause(0.8, 1.4)
+            # 인원 구성은 '총 N명' 라벨로 판별 불가 → 팝업 열어 확인
+            _set_passengers(page, config)
             human_pause(0.8, 1.4)
 
         # 열차종류 필터 탭 — 검색 제출 *전* 옵션은 적용 안 함. 결과 페이지에서 클릭.

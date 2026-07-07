@@ -38,3 +38,7 @@ runs/
 
 # Claude Code 로컬 설정 (개인 권한/환경)
 .claude/settings.local.json
+
+# chrome-bind 바인딩 SSOT(머신별 실값) · 백업 · 크롬 프로필 캐시
+.claude/skills/chrome-bind/chrome_binding.yaml
+KRS_ECLASS_CACHE/

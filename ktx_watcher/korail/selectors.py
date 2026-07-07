@@ -20,6 +20,29 @@ DATE_PICKER_BTN = "a.btn_pop.btn_d-day"
 SEARCH_SUBMIT = "button.btn_lookup"
 SEARCH_FORM_DETECT = "button.btn_lookup, input[name='txtGoStart']"
 
+# 인원 선택 팝업 — VERIFIED 2026-07-07 (CDP DOM probe)
+#   폼의 <a class="data btn_pop">총 1명</a> 클릭 → .layerWrap.personnel_pop_wrap
+#   <li><p>경로(65세 이상)</p><div class="flo_right">
+#     <button class="down_num" [disabled]>...<span>0</span><button class="up_num">
+#   하단 <button class="btn_bn-blue">적용</button> / <button class="btn_pop-close">취소</button>
+PEOPLE_BTN = "a.data.btn_pop"
+PEOPLE_POPUP = ".layerWrap.personnel_pop_wrap"
+PEOPLE_POPUP_APPLY = ".layerWrap.personnel_pop_wrap .btnWrap button.btn_bn-blue"
+PEOPLE_POPUP_CANCEL = ".layerWrap.personnel_pop_wrap .btnWrap button.btn_pop-close"
+# 비어른 구성 적용 시 확인 모달 "경로 : 1명 / 선택하신 인원이 확실한가요?" → 예
+# (VERIFIED 2026-07-07 — 별도 .layerWrap + .confirm_message 로 뜸)
+PEOPLE_CONFIRM_YES = ".layerWrap:has(.confirm_message) button.btn_bn-blue"
+# config 유형명 → 팝업 li <p> 라벨 prefix ("경로(65세 이상)", "중증 장애인" 등)
+PASSENGER_TYPE_PREFIX = {
+    "어른": "어른",
+    "어린이": "어린이",
+    "유아": "유아",
+    "경로": "경로",
+    "중증장애인": "중증",
+    "경증장애인": "경증",
+    "국가유공자": "국가유공자",
+}
+
 # 역 선택 팝업
 STATION_POPUP = ".layerWrap.type_tranin-station-pop_wrap"
 STATION_POPUP_INPUT = "input[name='searchTxt']"
