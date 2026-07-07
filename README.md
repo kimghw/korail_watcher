@@ -1,7 +1,22 @@
-# 🚅 SRT Watcher (Docker, Headful/Headless)
+# 🪑 빈자리 (binjari)
+
+**기차(KTX·SRT)와 비행기(대한항공)의 빈자리를 감시하다가 잡아주는 예매 워처.**
+조회 → 예약 → (옵션) 결제/발권 → (옵션) 승차권 전달까지 자동 처리하고, 성공하면 Teams 알림으로 알려줍니다.
+
+| 모듈 | 대상 | 실행 |
+|---|---|---|
+| `ktx_watcher` | 코레일 KTX (경로 등 승객유형·전달하기 지원) | `python -m ktx_watcher.main` |
+| `srt_watcher` | SRT | `python -m srt_watcher.main` |
+| `korean_air_watcher` | 대한항공 (마일리지 보너스석 포함) | `python -m korean_air_watcher.main` |
+
+설정은 `.env.ktx.example` 을 `.env.ktx` 로 복사해 실값을 채워 사용합니다 (실값 파일은 커밋 금지).
+
+---
+
+## SRT Watcher (Docker, Headful/Headless)
 
 컨테이너가 뜨면 **즉시 실행**되어 SRT 좌석을 **조회 → 예약 → (옵션) 결제/발권**까지 자동 처리합니다.  
-특정 시각 근처 열차를 안정적으로 노리고, 성공 시 **텔레그램 알림**으로 바로 확인할 수 있습니다.
+특정 시각 근처 열차를 안정적으로 노립니다.
 
 ---
 

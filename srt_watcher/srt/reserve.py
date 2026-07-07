@@ -937,7 +937,7 @@ def attempt_reservation(
             page.evaluate("""() => {
                 // window.open 차단 (광고/공지 팝업 방지)
                 window.open = function() {
-                    console.log('[SRT-Watcher] window.open blocked');
+                    console.log('[binjari] window.open blocked');
                     return null;
                 };
 
@@ -972,7 +972,7 @@ def attempt_reservation(
             # 팝업 차단
             page.evaluate("""() => {
                 window.open = function() {
-                    console.log('[SRT-Watcher] window.open blocked');
+                    console.log('[binjari] window.open blocked');
                     return null;
                 };
             }""")

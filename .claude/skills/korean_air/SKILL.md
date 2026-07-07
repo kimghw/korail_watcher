@@ -13,8 +13,8 @@ KE 는 KTX/SRT 와 달리 (1) 국내/국제 분기, (2) 보너스(마일리지)/
 
 | 키 종류 | 파일 |
 |---|---|
-| **여정 키** (`KOREAN_AIR_TRIP_TYPE/FARE_TYPE/ORIGIN/DEST/DEPART_DATE/RETURN_DATE/DEPART_TIMES/DEPART_TIME_WINDOW/RETURN_TIMES/RETURN_TIME_WINDOW/CABIN/PAX_ADULT/PAX_CHILD/PAX_INFANT/TOLERANCE_MIN/FLIGHT_NO`) | `c:\Users\kimghw\korail_watcher\.env.korean_air` |
-| **그 외** (계정, KOREAN_AIR_MODE, KOREAN_AIR_ONCE, KOREAN_AIR_CDP_*, KOREAN_AIR_POLL_*, KOREAN_AIR_LOG_*, TEAMS_*, RAIL_RUN_MODE 등) | `c:\Users\kimghw\korail_watcher\.env` |
+| **여정 키** (`KOREAN_AIR_TRIP_TYPE/FARE_TYPE/ORIGIN/DEST/DEPART_DATE/RETURN_DATE/DEPART_TIMES/DEPART_TIME_WINDOW/RETURN_TIMES/RETURN_TIME_WINDOW/CABIN/PAX_ADULT/PAX_CHILD/PAX_INFANT/TOLERANCE_MIN/FLIGHT_NO`) | `c:\Users\kimghw\binjari\.env.korean_air` |
+| **그 외** (계정, KOREAN_AIR_MODE, KOREAN_AIR_ONCE, KOREAN_AIR_CDP_*, KOREAN_AIR_POLL_*, KOREAN_AIR_LOG_*, TEAMS_*, RAIL_RUN_MODE 등) | `c:\Users\kimghw\binjari\.env` |
 
 `.env.korean_air` 는 git tracked (`.env.ktx`/`.env.srt` 와 동일 정책). 워처가 `ENV_FILES` 맨 앞에서 우선 로드한다 (`korean_air_watcher/config.py`).
 
@@ -39,20 +39,20 @@ KE 홈 검색 위젯은 일반 HTML form 처럼 보이지만 KDS (Korean Air Des
 
 ## ⚠ 사전 조건 — 동작 환경
 
-**이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 clone 받은 디렉토리 안에서만 동작한다.** `korean_air_watcher`, `team_mcp` 모듈이 없으면 4·7 단계가 무조건 실패하므로 다른 위치에서는 **시작하지 않는다**.
+**이 스킬은 `https://github.com/kimghw/binjari.git` 를 clone 받은 디렉토리 안에서만 동작한다.** `korean_air_watcher`, `team_mcp` 모듈이 없으면 4·7 단계가 무조건 실패하므로 다른 위치에서는 **시작하지 않는다**.
 
 ### 워크플로우 시작 전 점검 (필수, 1회)
 
-1. **repo 매칭** — `git -C "<cwd>" remote get-url origin` 가 `kimghw/korail_watcher.git` 인지 확인.
+1. **repo 매칭** — `git -C "<cwd>" remote get-url origin` 가 `kimghw/binjari.git` 인지 확인.
 2. **필수 폴더 존재** — cwd 에 `korean_air_watcher/`, `team_mcp/` 가 있어야 함.
 
 둘 중 하나라도 실패하면 사용자에게 그대로 보여준다:
 
-> 이 스킬은 `https://github.com/kimghw/korail_watcher.git` 디렉토리에서만 동작합니다.
+> 이 스킬은 `https://github.com/kimghw/binjari.git` 디렉토리에서만 동작합니다.
 > 현재 위치: `<cwd>` — `korean_air_watcher` / `team_mcp` 모듈이 없어 진행할 수 없습니다.
 >
 > 해결:
-> - `git clone https://github.com/kimghw/korail_watcher.git`
+> - `git clone https://github.com/kimghw/binjari.git`
 > - 또는 해당 폴더로 이동 후 다시 호출
 > - 오래됐을 수 있으면 `git pull` 후 재시도
 

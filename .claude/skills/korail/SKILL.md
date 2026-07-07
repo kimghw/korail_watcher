@@ -11,9 +11,9 @@ description: KTX/SRT 통합 예매 워크플로우. 사용자가 기차 예매 �
 
 | 키 종류 | 파일 |
 |---|---|
-| **KTX 여정** (`KTXA_ORIGIN/DEST/DATE/TIMES/TIME_WINDOW/PASSENGERS/SEAT_CLASS/TOLERANCE_MIN/TRAIN_NO`) | `c:\Users\kimghw\korail_watcher\.env.ktx` |
-| **SRT 여정** (`SRT_ORIGIN/DEST/DATE/TIMES/TIME_WINDOW/PASSENGERS/SEAT_CLASS/TOLERANCE_MIN/TRAIN_NO`) | `c:\Users\kimghw\korail_watcher\.env.srt` |
-| **그 외 전부** (계정, PAY_*, KTXA_MODE / KTXA_PAYMENT_MODE / KTXA_ONCE, SRT_MODE / PAYMENT_MODE / SRT_ONCE, TEAMS_*, RAIL_RUN_MODE 등) | `c:\Users\kimghw\korail_watcher\.env` |
+| **KTX 여정** (`KTXA_ORIGIN/DEST/DATE/TIMES/TIME_WINDOW/PASSENGERS/SEAT_CLASS/TOLERANCE_MIN/TRAIN_NO`) | `c:\Users\kimghw\binjari\.env.ktx` |
+| **SRT 여정** (`SRT_ORIGIN/DEST/DATE/TIMES/TIME_WINDOW/PASSENGERS/SEAT_CLASS/TOLERANCE_MIN/TRAIN_NO`) | `c:\Users\kimghw\binjari\.env.srt` |
+| **그 외 전부** (계정, PAY_*, KTXA_MODE / KTXA_PAYMENT_MODE / KTXA_ONCE, SRT_MODE / PAYMENT_MODE / SRT_ONCE, TEAMS_*, RAIL_RUN_MODE 등) | `c:\Users\kimghw\binjari\.env` |
 
 `.env.ktx` / `.env.srt` 는 `.gitignore` 처리되어 있고, 양 워처가 `ENV_FILES` 맨 앞에서 우선 로드한다 (`ktx_watcher/config.py:14`, `srt_watcher/config.py:15-19`). 레거시 `RAIL_*` 키는 더 이상 쓰지 않는다 (코드의 fallback 매핑만 남아 있음 — 새로 쓰는 키는 KTXA_*/SRT_* 로 분리).
 
@@ -21,7 +21,7 @@ description: KTX/SRT 통합 예매 워크플로우. 사용자가 기차 예매 �
 
 ## ⚠ 사전 조건 — 동작 환경 (시작 전 반드시 확인)
 
-**이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 clone 받은 디렉토리 안에서만 동작한다.**
+**이 스킬은 `https://github.com/kimghw/binjari.git` 를 clone 받은 디렉토리 안에서만 동작한다.**
 그 외 위치에서는 `ktx_watcher` / `srt_watcher` / `team_mcp` 모듈이 없어 4·8단계가 무조건 실패하며,
 스킬이 묻는 질문에 답을 다 받아도 의미 있는 결과를 줄 수 없다 — 따라서 다른 위치에서는 **시작하지 않는다**.
 
@@ -32,17 +32,17 @@ description: KTX/SRT 통합 예매 워크플로우. 사용자가 기차 예매 �
 1. **repo 매칭** — cwd 의 git remote 가 이 repo 인지 확인.
    ```bash
    git -C "<cwd>" remote get-url origin
-   # 기대값: https://github.com/kimghw/korail_watcher.git (혹은 SSH 변형)
+   # 기대값: https://github.com/kimghw/binjari.git (혹은 SSH 변형)
    ```
 2. **필수 폴더 존재** — cwd 에 `ktx_watcher/`, `srt_watcher/`, `team_mcp/` 세 폴더가 모두 있어야 함.
 
 **둘 중 하나라도 실패 → 워크플로우 진입 중단.** 1·2단계로 넘어가지 말고 사용자에게 아래를 그대로 보여준다:
 
-> 이 스킬은 `https://github.com/kimghw/korail_watcher.git` 를 clone 받은 디렉토리에서만 동작합니다.
+> 이 스킬은 `https://github.com/kimghw/binjari.git` 를 clone 받은 디렉토리에서만 동작합니다.
 > 현재 위치: `<cwd>` — 필수 모듈 (`ktx_watcher` / `srt_watcher` / `team_mcp`) 이 없어 진행할 수 없습니다.
 >
 > 해결:
-> - 처음이라면: `git clone https://github.com/kimghw/korail_watcher.git`
+> - 처음이라면: `git clone https://github.com/kimghw/binjari.git`
 > - 이미 clone 받아두었다면 해당 폴더로 이동 후 다시 호출
 > - 오래됐을 수 있으면 해당 폴더에서: `git pull` 후 재시도
 >
@@ -63,14 +63,14 @@ description: KTX/SRT 통합 예매 워크플로우. 사용자가 기차 예매 �
 이 경우 stdout/stderr 그대로 보여주고 한 블록 덧붙임:
 
 > 위 에러는 보통 다음 둘 중 하나입니다:
-> 1. 이 스킬이 `https://github.com/kimghw/korail_watcher.git` clone 디렉토리 **밖** 에서 실행됨
+> 1. 이 스킬이 `https://github.com/kimghw/binjari.git` clone 디렉토리 **밖** 에서 실행됨
 > 2. clone 받았지만 **버전이 오래되어** 새 모듈/플래그가 없음
 >
 > 현재 cwd: `<cwd>`.
 > 해결:
 > - 올바른 폴더로 이동했는지 확인
 > - 해당 폴더에서 `git pull` 후 재시도
-> - 그래도 안 되면 `git clone https://github.com/kimghw/korail_watcher.git` 로 새로 받기
+> - 그래도 안 되면 `git clone https://github.com/kimghw/binjari.git` 로 새로 받기
 
 그 외 정상 경로(모듈 import OK, 로그인 또는 좌석 매진 같은 비즈니스 실패) 면 이 안내를 띄우지 않는다 — 진짜 문제를 가린다.
 

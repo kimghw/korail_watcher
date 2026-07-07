@@ -106,7 +106,7 @@ class KoreanAirConfig(BaseModel):
     teams_user_email: Optional[str] = Field(None, alias="TEAMS_USER_EMAIL")
     teams_chat_id: Optional[str] = Field(None, alias="TEAMS_CHAT_ID")
     teams_recipient_name: Optional[str] = Field(None, alias="TEAMS_RECIPIENT_NAME")
-    teams_prefix: str = Field("[AIR WATCHER]", alias="TEAMS_PREFIX")
+    teams_prefix: str = Field("[binjari KE]", alias="TEAMS_PREFIX")
 
     model_config = ConfigDict(populate_by_name=True, extra="ignore")
 

@@ -35,7 +35,7 @@ from ktx_watcher.korail import search as ktx_search
 LOGGER = logging.getLogger("web_server")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s | %(name)s | %(message)s")
 
-app = FastAPI(title="SRT/KTX 조회 웹서버")
+app = FastAPI(title="binjari — KTX/SRT 조회 웹서버")
 
 ARTIFACT_ROOT = Path("/tmp/srt_ktx_web/artifacts")
 ARTIFACT_ROOT.mkdir(parents=True, exist_ok=True)

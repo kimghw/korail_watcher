@@ -15,7 +15,7 @@ class Notifier(ABC):
         depart_time = summary.get("depart_time")
         status = summary.get("status", "UNKNOWN")
         seat_class = summary.get("seat_class", "")
-        return f"[KTX-A] {origin}→{dest} {depart_time} [{seat_class}] {status}"
+        return f"[binjari KTX] {origin}→{dest} {depart_time} [{seat_class}] {status}"
 
     def notify_summary(self, summary: Dict[str, Any]) -> None:
         self.notify(self.format_availability(summary))

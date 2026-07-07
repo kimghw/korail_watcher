@@ -31,7 +31,7 @@ class TeamsNotifier(Notifier):
         user_email: Optional[str] = None,
         chat_id: Optional[str] = None,
         recipient_name: Optional[str] = None,
-        prefix: str = "[SRT WATCHER]",
+        prefix: str = "[binjari SRT]",
     ) -> None:
         self.user_email = user_email
         self.chat_id = chat_id

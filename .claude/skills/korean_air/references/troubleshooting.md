@@ -1,6 +1,6 @@
 # korean_air 워처 — 문제점 & 해결방안
 
-`korail_watcher` 의 `korean_air_watcher` 가 KE 보너스(마일) 좌석을 폴링하면서 만난 함정과 검증된 회피책. 작성 시점 2026-05-20.
+`binjari` 의 `korean_air_watcher` 가 KE 보너스(마일) 좌석을 폴링하면서 만난 함정과 검증된 회피책. 작성 시점 2026-05-20.
 
 ---
 
@@ -24,7 +24,7 @@ resolved_path = os.path.join(base_dir, db_path)
 `.env` 의 `DB_PATH` 를 절대 경로로.
 
 ```dotenv
-DB_PATH=C:/Users/kimghw/korail_watcher/team_mcp/database/auth.db
+DB_PATH=C:/Users/kimghw/binjari/team_mcp/database/auth.db
 ```
 
 토큰 자동 refresh 가 정상 동작 — access 만료돼도 refresh_token 으로 갱신, 다음 알림에 사용 가능.

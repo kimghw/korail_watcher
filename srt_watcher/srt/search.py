@@ -643,7 +643,7 @@ def perform_search(client: SRTClient, config: SRTConfig, artifact_root: Path) ->
         try:
             page.evaluate("""() => {
                 window.open = function() {
-                    console.log('[SRT-Watcher] window.open blocked');
+                    console.log('[binjari] window.open blocked');
                     return null;
                 };
             }""")

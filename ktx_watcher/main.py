@@ -31,7 +31,7 @@ def _build_teams_notifier(config: KTXAConfig) -> TeamsNotifier | None:
         user_email=getattr(config, "teams_user_email", None),
         chat_id=getattr(config, "teams_chat_id", None),
         recipient_name=getattr(config, "teams_recipient_name", None),
-        prefix=getattr(config, "teams_prefix", "[KTX-A WATCHER]"),
+        prefix=getattr(config, "teams_prefix", "[binjari KTX]"),
     )
 
 

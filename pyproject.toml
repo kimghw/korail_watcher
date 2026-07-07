@@ -1,7 +1,7 @@
 [project]
-name = "srt-watcher"
+name = "binjari"
 version = "0.1.0"
-description = "Add your description here"
+description = "빈자리(binjari) — KTX/SRT/대한항공 빈자리 감시·예매 워처"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

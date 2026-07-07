@@ -59,7 +59,7 @@ class SRTConfig(BaseModel):
     teams_user_email: Optional[str] = Field(None, alias="TEAMS_USER_EMAIL")
     teams_chat_id: Optional[str] = Field(None, alias="TEAMS_CHAT_ID")
     teams_recipient_name: Optional[str] = Field(None, alias="TEAMS_RECIPIENT_NAME")
-    teams_prefix: str = Field("[SRT WATCHER]", alias="TEAMS_PREFIX")
+    teams_prefix: str = Field("[binjari SRT]", alias="TEAMS_PREFIX")
 
     srt_passengers: int = Field(1, alias="SRT_PASSENGERS")
     srt_seat_class: str = Field("일반실", alias="SRT_SEAT_CLASS")

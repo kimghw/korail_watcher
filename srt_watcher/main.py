@@ -47,7 +47,7 @@ def build_teams_notifier(config: SRTConfig) -> TeamsNotifier | None:
         user_email=getattr(config, "teams_user_email", None),
         chat_id=getattr(config, "teams_chat_id", None),
         recipient_name=getattr(config, "teams_recipient_name", None),
-        prefix=getattr(config, "teams_prefix", "[SRT WATCHER]"),
+        prefix=getattr(config, "teams_prefix", "[binjari SRT]"),
     )
 
 # ========== Sleep / Backoff ==========
@@ -100,7 +100,7 @@ def run_once(
 
     # 후보 발견 알림
     if notifier:
-        notifier.notify(f"[SRT WATCHER]\n후보 발견:\n{base_msg}")
+        notifier.notify(f"[binjari SRT]\n후보 발견:\n{base_msg}")
 
     # MODE=search 이면 여기서 종료 (watcher는 계속 돈다)
     if mode == "search":
@@ -118,7 +118,7 @@ def run_once(
         # 예외 없이 왔다 = 예약 성공
         LOGGER.info("예약 성공!")
         if notifier:
-            notifier.notify(f"[SRT WATCHER]\n✅ 예약 성공!\n{base_msg}")
+            notifier.notify(f"[binjari SRT]\n✅ 예약 성공!\n{base_msg}")
 
         # ⬇️ 결제 모드면 결제까지 진행
         if payment_enabled(config):
@@ -133,7 +133,7 @@ def run_once(
 
             LOGGER.info("결제 성공!")
             if notifier:
-                notifier.notify(f"[SRT WATCHER]\n💳 결제 성공!\n{base_msg}")
+                notifier.notify(f"[binjari SRT]\n💳 결제 성공!\n{base_msg}")
 
         # 결제 비활성화면 예약 성공 시점에서 종료 / 활성화면 결제 성공 후 종료
         STOP_EVENT = True
@@ -142,14 +142,14 @@ def run_once(
     except CaptchaDetected as e:
         LOGGER.warning("Captcha / Queue detected during reservation: %s", e)
         if notifier:
-            notifier.notify("[SRT WATCHER]\n캡차/대기열 감지됨. 잠시 후 자동 재시도합니다.")
+            notifier.notify("[binjari SRT]\n캡차/대기열 감지됨. 잠시 후 자동 재시도합니다.")
         _sleep_with_jitter(base_seconds=float(config.srt_poll_min), max_seconds=float(config.srt_poll_max))
         return False
 
     except SiteLayoutChanged as e:
         LOGGER.error("Site layout changed during reservation: %s", e)
         if notifier:
-            notifier.notify("[SRT WATCHER]\n❌ SRT 사이트 구조 변경 감지. selectors.py / reserve.py / search.py 점검 필요.")
+            notifier.notify("[binjari SRT]\n❌ SRT 사이트 구조 변경 감지. selectors.py / reserve.py / search.py 점검 필요.")
         # 사이트 구조 변경은 즉시 종료(외부 업데이트 필요)
         STOP_EVENT = True
         return True
@@ -157,7 +157,7 @@ def run_once(
     except Exception as e:
         LOGGER.error("Unhandled reservation/payment error: %s", e, exc_info=True)
         if notifier:
-            notifier.notify("[SRT WATCHER]\n❌ 예약/결제 단계 에러. artifacts를 확인하세요.")
+            notifier.notify("[binjari SRT]\n❌ 예약/결제 단계 에러. artifacts를 확인하세요.")
         # 정책상: 다음 루프에서 다시 시도
         return False
 
@@ -237,13 +237,13 @@ def main() -> int:
         except SiteLayoutChanged as e:
             LOGGER.error("Site layout changed at top-level: %s", e)
             if notifier:
-                notifier.notify("[SRT WATCHER]\n❌ SRT 사이트 구조 변경 감지. 코드 업데이트 필요.")
+                notifier.notify("[binjari SRT]\n❌ SRT 사이트 구조 변경 감지. 코드 업데이트 필요.")
             return 1  # 구조 변경은 수동 조치 필요 → 종료
 
         except CaptchaDetected as e:
             LOGGER.error("Captcha / Queue detected at top-level: %s", e)
             if notifier:
-                notifier.notify("[SRT WATCHER]\n❌ 초기 접속 시 캡차/대기열 감지. 자동 재시작합니다.")
+                notifier.notify("[binjari SRT]\n❌ 초기 접속 시 캡차/대기열 감지. 자동 재시작합니다.")
             delay = min(backoff, backoff_max) + random.uniform(0, 2)
             LOGGER.info("Retrying from scratch after %.2fs (top-level captcha)", delay)
             time.sleep(delay)
@@ -254,7 +254,7 @@ def main() -> int:
             LOGGER.error("Unhandled fatal error at top-level (will restart): %s", e, exc_info=True)
             if notifier:
                 try:
-                    notifier.notify("[SRT WATCHER]\n❌ 식별 되지 않은 오류 발생. 재시작합니다.")
+                    notifier.notify("[binjari SRT]\n❌ 식별 되지 않은 오류 발생. 재시작합니다.")
                 except Exception:
                     pass
             delay = min(backoff, backoff_max) + random.uniform(0, 2)

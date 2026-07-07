@@ -1,6 +1,6 @@
 """Microsoft Teams notifier (team_mcp 사용). srt_watcher 와 동일 구조.
 
-prefix 만 ``[KTX-A WATCHER]`` 로 변경.
+prefix 만 ``[binjari KTX]`` 로 변경.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class TeamsNotifier(Notifier):
         user_email: Optional[str] = None,
         chat_id: Optional[str] = None,
         recipient_name: Optional[str] = None,
-        prefix: str = "[KTX-A WATCHER]",
+        prefix: str = "[binjari KTX]",
     ) -> None:
         self.user_email = user_email
         self.chat_id = chat_id
