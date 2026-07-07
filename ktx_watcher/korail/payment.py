@@ -123,16 +123,36 @@ def _click_card_payment_tab(page: Page) -> None:
 
 
 def _fill_card_segment(page: Page, name: str, value: str) -> None:
+    """입력 후 실제 DOM 값을 읽어 검증, 불일치면 지우고 재입력 (최대 3회).
+
+    실측 2026-07-07: 검증 없이 타이핑만 하면 cardNo1 에 엉뚱한 값(회원번호 앞자리)이
+    남아 결제가 거부된 사례 — 사이트 JS 간섭 여부와 무관하게 값 기준으로 확정한다.
+    """
     loc = page.locator(f"input[name='{name}']").first
     if loc.count() == 0:
         raise SiteLayoutChanged(f"카드 입력 필드 미발견: name={name}")
-    try:
-        loc.click(timeout=3000)
-    except Exception:
-        pass
-    _time.sleep(random.uniform(0.15, 0.4))
-    loc.press_sequentially(value, delay=random.randint(70, 140))
-    _time.sleep(random.uniform(0.2, 0.5))
+    for attempt in range(1, 4):
+        try:
+            loc.click(timeout=3000)
+        except Exception:
+            pass
+        _time.sleep(random.uniform(0.15, 0.4))
+        try:
+            if loc.input_value(timeout=1000):
+                loc.fill("")
+                _time.sleep(random.uniform(0.1, 0.25))
+        except Exception:
+            pass
+        loc.press_sequentially(value, delay=random.randint(70, 140))
+        _time.sleep(random.uniform(0.2, 0.5))
+        try:
+            cur = loc.input_value(timeout=1500)
+        except Exception:
+            return  # 값 판독 불가 필드 — 기존 동작대로 진행
+        if cur == value:
+            return
+        LOGGER.warning("카드 필드 %s 값 불일치 (attempt=%d, len=%d) — 재입력", name, attempt, len(cur))
+    raise UserActionRequired(f"카드 필드 {name} 입력이 3회 모두 불일치 — 수동 확인 필요")
 
 
 def _set_card_year(page: Page, data: Dict[str, str]) -> None:
@@ -271,6 +291,19 @@ def perform_payment(
         LOGGER.warning("동의 체크 처리 중 예외(계속 진행): %s", e)
 
     dismiss_all_popups(client.context)
+
+    # 6.5) 클릭 직전 카드번호 4등분 최종 검증 — 입력 후 다른 값으로 바뀌어 있으면 재입력
+    for seg_name, seg_val in (("cardNo1", data["c1"]), ("cardNo2", data["c2"]),
+                              ("cardNo3", data["c3"]), ("cardNo4", data["c4"]),
+                              ("cardMonth", data["mm"])):
+        try:
+            cur = page.locator(f"input[name='{seg_name}']").first.input_value(timeout=1000)
+        except Exception:
+            continue
+        if cur != seg_val:
+            LOGGER.warning("최종 검증: %s 값 뒤바뀜(len=%d) — 재입력", seg_name, len(cur))
+            _fill_card_segment(page, seg_name, seg_val)
+    human_pause(0.3, 0.7)
 
     # 7) 결제/발권 클릭
     pay_btn = page.locator("button:has-text('결제/발권')").first

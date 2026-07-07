@@ -695,6 +695,9 @@ def perform_search(
                 kind = "standing"
             else:
                 continue
+            # 좌석 직행만: 입석+좌석/예약대기 후보 제외
+            if config.ktxa_seated_only and kind != "reserve":
+                continue
             candidates.append({
                 "origin": config.ktxa_origin,
                 "dest": config.ktxa_dest,

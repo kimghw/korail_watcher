@@ -15,6 +15,7 @@ from .korail import CaptchaDetected, LoginError, SiteLayoutChanged, UserActionRe
 from .korail import payment as payment_mod
 from .korail import reserve as reserve_mod
 from .korail import search as search_mod
+from .korail import transfer as transfer_mod
 from .korail.client import KorailSPAClient
 from .notifier.teams import TeamsNotifier
 
@@ -63,6 +64,26 @@ def _sleep_with_jitter(min_s: float, max_s: float) -> None:
     delay = min_s + random.uniform(0, max(0.0, max_s - min_s))
     LOGGER.info("다음 검색까지 %.2fs 대기", delay)
     time.sleep(delay)
+
+
+def _maybe_transfer(
+    client: KorailSPAClient,
+    config: KTXAConfig,
+    notifier: TeamsNotifier | None,
+) -> None:
+    """발권 후 승차권 전달 (KTXA_TRANSFER_ENABLED=true 일 때). 실패해도 발권 결과는 유지."""
+    if not config.ktxa_transfer_enabled:
+        return
+    try:
+        result = transfer_mod.perform_transfer(client, config)
+        if result == "sent":
+            _notify(notifier, f"✅ 승차권 전달 완료 → {config.ktxa_transfer_name}")
+        else:
+            LOGGER.info("승차권 전달 dry-run 완료 (전송 안 함)")
+            _notify(notifier, "ℹ 승차권 전달 dry-run — 입력까지 확인, 전송은 KTXA_TRANSFER_SEND=true 필요")
+    except Exception as e:
+        LOGGER.error("승차권 전달 실패 (%s: %s) — 발권은 완료 상태", type(e).__name__, e)
+        _notify(notifier, f"⚠ 승차권 전달 실패 — 수동 전달 필요\n{e}")
 
 
 def run_once(
@@ -127,6 +148,7 @@ def run_once(
         payment_mod.perform_payment(client, config)
         LOGGER.info("✅✅ 결제/발권 완료")
         _notify(notifier, f"✅✅ 결제/발권 완료\n{info_line}")
+        _maybe_transfer(client, config, notifier)
         return True
     except UserActionRequired as e:
         LOGGER.error("결제 단계에서 사용자 개입 필요: %s", e)

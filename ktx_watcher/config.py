@@ -57,6 +57,8 @@ class KTXAConfig(BaseModel):
     # "어른:1,경로:1" 형식이면 유형별 인원 직접 지정 (KTXA_PASSENGERS 무시).
     ktxa_passenger_type: str = Field("어른", alias="KTXA_PASSENGER_TYPE")
     ktxa_seat_class: str = Field("", alias="KTXA_SEAT_CLASS")
+    # true 면 바로 좌석 예매 가능한 열차만 후보 (입석+좌석/예약대기 제외)
+    ktxa_seated_only: bool = Field(False, alias="KTXA_SEATED_ONLY")
     ktxa_train_type: str = Field("KTX", alias="KTXA_TRAIN_TYPE")
     ktxa_tolerance_min: int = Field(0, alias="KTXA_TOLERANCE_MIN")
     ktxa_time_window: Optional[Tuple[time, time]] = Field(
@@ -86,6 +88,14 @@ class KTXAConfig(BaseModel):
     pay_card_yy: str = Field("", alias="PAY_CARD_YY")
     pay_card_pw2: str = Field("", alias="PAY_CARD_PW2")
     pay_id6: str = Field("", alias="PAY_ID6")
+
+    # ─ 승차권 전달하기 (발권 후 자동 전달) ─
+    ktxa_transfer_enabled: bool = Field(False, alias="KTXA_TRANSFER_ENABLED")
+    # False 면 수신자 입력까지만 하고 '전송하기' 직전 중단 (dry-run)
+    ktxa_transfer_send: bool = Field(False, alias="KTXA_TRANSFER_SEND")
+    ktxa_transfer_member_no: str = Field("", alias="KTXA_TRANSFER_MEMBER_NO")
+    ktxa_transfer_name: str = Field("", alias="KTXA_TRANSFER_NAME")
+    ktxa_transfer_phone: str = Field("", alias="KTXA_TRANSFER_PHONE")
 
     # ─ Notifier (선택) ─
     teams_enabled: bool = Field(False, alias="TEAMS_ENABLED")
@@ -146,7 +156,8 @@ class KTXAConfig(BaseModel):
             raise ValueError("KTXA_TIME_WINDOW start must be <= end")
         return s, e
 
-    @field_validator("ktxa_once", "teams_enabled", "ktxa_payment_mode", mode="before")
+    @field_validator("ktxa_once", "teams_enabled", "ktxa_payment_mode", "ktxa_seated_only",
+                     "ktxa_transfer_enabled", "ktxa_transfer_send", mode="before")
     @classmethod
     def _parse_bool(cls, v):
         return _boolify(v)
@@ -200,7 +211,8 @@ class KTXAConfig(BaseModel):
             return {k: n for k, n in out.items() if n > 0}
         return {self.ktxa_passenger_type: self.ktxa_passengers}
 
-    @field_validator("ktxa_user", "ktxa_pass", mode="after")
+    @field_validator("ktxa_user", "ktxa_pass", "ktxa_transfer_member_no",
+                     "ktxa_transfer_name", "ktxa_transfer_phone", mode="after")
     @classmethod
     def _strip_opt(cls, v):
         return (v or "").strip()
