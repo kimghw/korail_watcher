@@ -32,6 +32,8 @@ Thumbs.db
 runs/
 
 .env
+# 자격증명·카드정보 실값 — 양식은 .env.ktx.example 사용
+.env.ktx
 
 # 인증 DB (OAuth 토큰 등 비밀 포함)
 *.db
