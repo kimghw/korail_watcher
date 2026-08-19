@@ -1,7 +1,7 @@
 """
 team_mcp 패키지
 
-srt_watcher에서 Microsoft Teams 알림을 보내기 위한 패키지.
+워처들이 Microsoft Teams 알림을 보내기 위한 패키지.
 session/ 와 mcp_teams/ 를 자체 포함한다.
 
 이 패키지를 임포트하면 내부의 `session` 과 `mcp_teams` 가 최상위 모듈처럼

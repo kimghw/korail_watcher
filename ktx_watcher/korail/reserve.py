@@ -18,7 +18,7 @@ from typing import Any, Dict
 from playwright.sync_api import Page, TimeoutError as PWTimeoutError
 
 from ..config import KTXAConfig
-from . import CaptchaDetected, LoginError, SiteLayoutChanged, UserActionRequired
+from . import CaptchaDetected, LoginError, ReservationFailed, SiteLayoutChanged, UserActionRequired
 from . import selectors as S
 from .client import (
     KorailSPAClient,
@@ -52,62 +52,71 @@ def ensure_logged_in(
     human_pause(1.0, 2.0)
     human_mouse(page)
 
-    # 2) 로그인 페이지 — 이미 로그인 상태면 redirect
-    safe_goto(page, S.LOGIN_URL, timeout_ms=30_000)
-    try:
-        page.wait_for_load_state("networkidle", timeout=10_000)
-    except Exception:
-        pass
-    human_pause(1.0, 2.0)
+    # 2)~6) 로그인 시도 — '복호화오류' (사이트 암호화 키 만료/깨짐, 2026-08-18 실측)
+    # 는 페이지 새로고침 후 재입력하면 해소되는 일시 오류라 1회 재시도한다.
+    for attempt in range(2):
+        safe_goto(page, S.LOGIN_URL, timeout_ms=30_000)
+        try:
+            page.wait_for_load_state("networkidle", timeout=10_000)
+        except Exception:
+            pass
+        human_pause(1.0, 2.0)
 
-    if "/ticket/login" not in (page.url or ""):
-        LOGGER.info("이미 로그인 상태 (url=%s)", page.url)
-        return
-
-    LOGGER.info("로그인 시도: user=%s***", config.ktxa_user[:4])
-
-    # 3) 보안 키보드 해제
-    try:
-        keysec = page.locator(S.LOGIN_KEYSEC_CHECK)
-        if keysec.count() > 0 and keysec.first.is_checked():
-            keysec.first.uncheck(timeout=3000)
-            human_pause(0.3, 0.6)
-    except Exception:
-        pass
-
-    dismiss_macro_notice(page)
-
-    # 4) ID/PW 입력 (사람-유사 typing)
-    try:
-        human_type(page.locator(S.LOGIN_ID_INPUT).first, config.ktxa_user)
-        human_pause(0.3, 0.6)
-        human_type(page.locator(S.LOGIN_PW_INPUT).first, config.ktxa_pass)
-    except PWTimeoutError as e:
-        raise SiteLayoutChanged(f"로그인 입력 selector 실패: {e}") from e
-
-    human_mouse(page)
-    human_pause(0.5, 1.0)
-
-    # 5) 제출
-    try:
-        human_click(page.locator(S.LOGIN_SUBMIT).first)
-    except PWTimeoutError as e:
-        raise SiteLayoutChanged(f"로그인 제출 실패: {e}") from e
-
-    # 6) redirect 대기
-    for _ in range(30):
-        _time.sleep(0.5)
         if "/ticket/login" not in (page.url or ""):
-            LOGGER.info("로그인 성공 (url=%s)", page.url)
+            LOGGER.info("이미 로그인 상태 (url=%s)", page.url)
             return
-    try:
-        page.wait_for_load_state("networkidle", timeout=8000)
-    except Exception:
-        pass
 
-    dismiss_macro_notice(page)
+        LOGGER.info("로그인 시도%s: user=%s***",
+                    f" (재시도 {attempt})" if attempt else "", config.ktxa_user[:4])
 
-    if "/ticket/login" in (page.url or ""):
+        # 3) 보안 키보드 해제
+        try:
+            keysec = page.locator(S.LOGIN_KEYSEC_CHECK)
+            if keysec.count() > 0 and keysec.first.is_checked():
+                keysec.first.uncheck(timeout=3000)
+                human_pause(0.3, 0.6)
+        except Exception:
+            pass
+
+        dismiss_macro_notice(page)
+
+        # 4) ID/PW 입력 (사람-유사 typing)
+        try:
+            id_input = page.locator(S.LOGIN_ID_INPUT).first
+            pw_input = page.locator(S.LOGIN_PW_INPUT).first
+            id_input.fill("")
+            pw_input.fill("")
+            human_type(id_input, config.ktxa_user)
+            human_pause(0.3, 0.6)
+            human_type(pw_input, config.ktxa_pass)
+        except PWTimeoutError as e:
+            raise SiteLayoutChanged(f"로그인 입력 selector 실패: {e}") from e
+
+        human_mouse(page)
+        human_pause(0.5, 1.0)
+
+        # 5) 제출
+        try:
+            human_click(page.locator(S.LOGIN_SUBMIT).first)
+        except PWTimeoutError as e:
+            raise SiteLayoutChanged(f"로그인 제출 실패: {e}") from e
+
+        # 6) redirect 대기
+        for _ in range(30):
+            _time.sleep(0.5)
+            if "/ticket/login" not in (page.url or ""):
+                LOGGER.info("로그인 성공 (url=%s)", page.url)
+                return
+        try:
+            page.wait_for_load_state("networkidle", timeout=8000)
+        except Exception:
+            pass
+
+        dismiss_macro_notice(page)
+
+        if "/ticket/login" not in (page.url or ""):
+            break
+
         # 에러 메시지 추출 시도
         err = ""
         for sel in (".ReactModal__Content .tit", ".ReactModal__Content", ".error_msg"):
@@ -120,6 +129,14 @@ def ensure_logged_in(
                 pass
         if "통신 중 에러" in err:
             raise CaptchaDetected(f"Korail 매크로 차단 (로그인 단계): {err}")
+        if "복호화" in err and attempt == 0:
+            LOGGER.warning("로그인 복호화오류 — 안내 닫고 새로고침 후 재시도: %s", err)
+            try:
+                page.locator("button:has-text('확인')").first.click(timeout=2000)
+            except Exception:
+                pass
+            human_pause(1.5, 2.5)
+            continue
         raise LoginError(f"로그인 후에도 /ticket/login (err={err!r})")
 
     LOGGER.info("로그인 성공 (url=%s)", page.url)
@@ -264,7 +281,10 @@ def attempt_reservation(
         LOGGER.info(ok_label)
         return
 
+    # 성공 키워드도 없고 URL 도 안 바뀜 — 예약 미성립 (직전 dismiss 된 모달이 원인 안내였을 가능성).
+    # 정상 return 하면 main 이 좌석 hold 로 오판하고 결제 단계까지 진행하므로 반드시 실패로 알린다.
     LOGGER.warning("%s 클릭 후 성공 키워드 미감지 — url=%s", book_label, url)
+    raise ReservationFailed(f"{book_label} 클릭 후 예약 성립 확인 실패 (url={url})")
 
 
 __all__ = ["ensure_logged_in", "attempt_reservation"]

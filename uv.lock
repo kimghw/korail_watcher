@@ -503,7 +503,7 @@ wheels = [
 ]
 
 [[package]]
-name = "srt-watcher"
+name = "binjari"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

@@ -1,16 +1,18 @@
 [project]
 name = "binjari"
 version = "0.1.0"
-description = "빈자리(binjari) — KTX/SRT/대한항공 빈자리 감시·예매 워처"
+description = "빈자리(binjari) — KTX 빈자리 감시·예매 워처"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiohttp>=3.10",
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
     "platformdirs>=4.5.1",
     "playwright==1.55",
     "playwright-stealth>=2.0.2",
     "pydantic>=2.12.5",
     "python-dotenv>=1.2.1",
-    "python-telegram-bot>=22.5",
     "pyyaml>=6.0.3",
     "requests>=2.32.5",
     "rich>=14.2.0",

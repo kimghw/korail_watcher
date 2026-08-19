@@ -30,17 +30,17 @@ Thumbs.db
 
 # 런타임 산출물
 runs/
+# binjari_setup 스킬이 머신별로 생성 (경로가 PC 마다 다름)
+launch_binjari.bat
 
 .env
 # 자격증명·카드정보 실값 — 양식은 .env.ktx.example 사용
 .env.ktx
+# azure_env_export 스킬 산출물 (Azure 시크릿 실값)
+.env.azure
 
 # 인증 DB (OAuth 토큰 등 비밀 포함)
 *.db
 
 # Claude Code 로컬 설정 (개인 권한/환경)
 .claude/settings.local.json
-
-# chrome-bind 바인딩 SSOT(머신별 실값) · 백업 · 크롬 프로필 캐시
-.claude/skills/chrome-bind/chrome_binding.yaml
-KRS_ECLASS_CACHE/

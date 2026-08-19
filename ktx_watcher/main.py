@@ -11,7 +11,7 @@ from typing import Dict, List
 
 from .chrome_launcher import ChromeLauncher
 from .config import ConfigError, KTXAConfig, load_config
-from .korail import CaptchaDetected, LoginError, SiteLayoutChanged, UserActionRequired
+from .korail import CaptchaDetected, LoginError, ReservationFailed, SiteLayoutChanged, UserActionRequired
 from .korail import payment as payment_mod
 from .korail import reserve as reserve_mod
 from .korail import search as search_mod
@@ -86,6 +86,35 @@ def _maybe_transfer(
         _notify(notifier, f"⚠ 승차권 전달 실패 — 수동 전달 필요\n{e}")
 
 
+# SRT 빈자리 알림 중복 방지 (프로세스 생존 동안 유지)
+_SRT_NOTIFIED: set = set()
+
+# 이번 실행에서 이미 예약(hold/발권/예약대기)을 확보한 출발시각.
+# KTXA_TIMES 가 여러 개면 전부 확보할 때까지 감시를 계속하고,
+# 확보 건수가 감시 대상 수(len(ktxa_times)) 에 도달하면 종료한다.
+_RESERVED_DEPARTS: set = set()
+
+
+def _mark_reserved(config: KTXAConfig, depart: str, notifier) -> bool:
+    """확보 기록 후, 목표 도달 여부(=종료 여부) 반환.
+
+    목표는 KTXA_RESERVE_LIMIT (기본 1 = 여러 대 중 아무거나 1건 잡으면 종료,
+    0 = 선택한 열차 전부).
+    """
+    _RESERVED_DEPARTS.add(depart)
+    n_times = len(config.ktxa_times)
+    limit = config.ktxa_reserve_limit
+    total = n_times if limit <= 0 else min(limit, n_times)
+    got = len(_RESERVED_DEPARTS)
+    if got < total:
+        remaining = total - got
+        LOGGER.info("확보 %d/%d — 목표까지 %d건, 계속 감시", got, total, remaining)
+        _notify(notifier, f"📊 진행 상황: {got}/{total}건 확보 — 목표까지 {remaining}건, 계속 감시")
+        return False
+    LOGGER.info("목표 %d건 확보 — 감시 종료", total)
+    return True
+
+
 def run_once(
     client: KorailSPAClient,
     config: KTXAConfig,
@@ -95,6 +124,24 @@ def run_once(
     candidates: List[Dict] = search_mod.perform_search(client, config)
     if not candidates:
         LOGGER.info("후보 없음 (-8002 dismiss 됐을 수 있음). 다음 iteration 진행")
+        return False
+
+    # 이미 확보한 출발시각은 재시도하지 않는다 (다중 감시)
+    candidates = [c for c in candidates if c.get("depart") not in _RESERVED_DEPARTS]
+    if not candidates:
+        LOGGER.info("남은 후보 없음 (전부 확보했거나 좌석 없음). 다음 iteration 진행")
+        return False
+
+    # SRT 후보는 코레일 자동결제 불가 — Teams 알림만 보내고 예약 대상에서 제외
+    for c in [c for c in candidates if c.get("status_kind") == "srt_link"]:
+        key = (c["date"], c["depart"], c["seat_class"])
+        if key not in _SRT_NOTIFIED:
+            _SRT_NOTIFIED.add(key)
+            line = f"{c['origin']}→{c['dest']} {c['date']} {c['depart']} [{c['seat_class']}] {c['status']}"
+            LOGGER.info("SRT 빈자리 감지 (코레일 자동결제 불가 — 알림만): %s", line)
+            _notify(notifier, f"🔔 SRT 빈자리 감지 — SRT 앱/사이트에서 직접 예매하세요\n{line}")
+    candidates = [c for c in candidates if c.get("status_kind") != "srt_link"]
+    if not candidates:
         return False
 
     best = candidates[0]
@@ -115,6 +162,10 @@ def run_once(
         reserve_mod.attempt_reservation(client, config, best)
         LOGGER.info("✅ 예약 단계 통과 (좌석 hold)")
         _notify(notifier, f"✅ 예약 성공 (좌석 hold)\n{info_line}")
+    except ReservationFailed as e:
+        LOGGER.warning("예약 미성립 — 다음 iteration 재시도: %s", e)
+        _notify(notifier, f"⚠ 예약 미성립 (잔여석 소진 추정) — 다음 iteration 재시도\n{e}")
+        return False
     except CaptchaDetected as e:
         LOGGER.warning("Captcha during reservation: %s", e)
         _notify(notifier, f"⚠ 캡차/대기열 감지 — 다음 iteration 재시도\n{e}")
@@ -136,20 +187,20 @@ def run_once(
     if kind == "waitlist":
         LOGGER.info("kind=waitlist — 결제 단계 없음, 예약대기 신청 완료 상태")
         _notify(notifier, "ℹ 예약대기 신청 완료 — 빈자리 생기면 코레일에서 알림. 후속은 수동 결제.")
-        return True
+        return _mark_reserved(config, best["depart"], notifier)
 
     # 예약 단계 OK — 결제까지 연속 진행 (config 가 허용한 경우만)
     if not config.ktxa_payment_mode:
         LOGGER.info("KTXA_PAYMENT_MODE=false — 결제 단계 skip, 예약만 hold 상태")
         _notify(notifier, "ℹ KTXA_PAYMENT_MODE=false — 결제는 수동으로 진행하세요 (10분 timer)")
-        return True
+        return _mark_reserved(config, best["depart"], notifier)
 
     try:
         payment_mod.perform_payment(client, config)
         LOGGER.info("✅✅ 결제/발권 완료")
         _notify(notifier, f"✅✅ 결제/발권 완료\n{info_line}")
         _maybe_transfer(client, config, notifier)
-        return True
+        return _mark_reserved(config, best["depart"], notifier)
     except UserActionRequired as e:
         LOGGER.error("결제 단계에서 사용자 개입 필요: %s", e)
         _notify(notifier, f"❌ 결제 단계 사용자 개입 필요\n{e}")

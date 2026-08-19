@@ -60,7 +60,12 @@ class KTXAConfig(BaseModel):
     # true 면 바로 좌석 예매 가능한 열차만 후보 (입석+좌석/예약대기 제외)
     ktxa_seated_only: bool = Field(False, alias="KTXA_SEATED_ONLY")
     ktxa_train_type: str = Field("KTX", alias="KTXA_TRAIN_TYPE")
+    # true 면 검색 시 "에스알티(SRT) 함께 보기" 옵션을 켠다 (수서 발착 SRT 열차 포함)
+    ktxa_include_srt: bool = Field(False, alias="KTXA_INCLUDE_SRT")
     ktxa_tolerance_min: int = Field(0, alias="KTXA_TOLERANCE_MIN")
+    # 확보 목표 건수: 감시 시각(열차) 중 몇 건을 예약하면 종료할지.
+    # 1 = 아무거나 1건(기본), 0 = 선택한 열차 전부.
+    ktxa_reserve_limit: int = Field(1, alias="KTXA_RESERVE_LIMIT")
     ktxa_time_window: Optional[Tuple[time, time]] = Field(
         None, alias="KTXA_TIME_WINDOW"
     )
@@ -81,7 +86,7 @@ class KTXAConfig(BaseModel):
 
     # ─ Payment (reserve mode 끝나면 자동 결제까지) ─
     # KTXA_PAYMENT_MODE=true 면 결제 페이지에서 카드 정보 입력 + 결제/발권 클릭까지.
-    # 카드 정보는 .env 의 PAY_* 변수 (SRT 와 공유).
+    # 카드 정보는 .env 의 PAY_* 변수.
     ktxa_payment_mode: bool = Field(False, alias="KTXA_PAYMENT_MODE")
     pay_card_num: str = Field("", alias="PAY_CARD_NUM")
     pay_card_mm: str = Field("", alias="PAY_CARD_MM")
@@ -219,6 +224,8 @@ class KTXAConfig(BaseModel):
 
     @model_validator(mode="after")
     def _final(cls, values: "KTXAConfig"):
+        if values.ktxa_reserve_limit < 0:
+            raise ValueError("KTXA_RESERVE_LIMIT must be >= 0 (0=전부)")
         if values.ktxa_poll_min <= 0:
             raise ValueError("KTXA_POLL_MIN must be > 0")
         if values.ktxa_poll_max < values.ktxa_poll_min:

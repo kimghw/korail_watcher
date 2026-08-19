@@ -35,6 +35,10 @@ from . import selectors as S
 
 LOGGER = logging.getLogger("ktx_watcher_spa.korail.client")
 
+# KTXA_HUMANIZE 는 .env.ktx 에서도 읽어야 함 — import 시점 평가라 env 파일 선로드 필요
+from ..config import _load_env_files as _hload
+
+_hload()
 HUMANIZE = os.getenv("KTXA_HUMANIZE", "true").lower() not in ("false", "0", "no")
 
 
@@ -390,6 +394,17 @@ def dismiss_all_popups(context) -> int:
         if not is_info:
             continue
 
+        # dismiss 전에 모달 자체 텍스트 확보 — 예매 불발 원인 진단용 (body 는 페이지 머리글이라 무의미)
+        modal_txt = ""
+        for _sel in (".ReactModal__Content", "[role=dialog]"):
+            try:
+                _m = pg.locator(_sel).first
+                if _m.count() > 0 and _m.is_visible():
+                    modal_txt = _m.inner_text(timeout=500)
+                    break
+            except Exception:
+                continue
+
         # in-page ReactModal 인지 popup window 인지 무관 — visible 한 '확인' 버튼만 찾아 클릭
         try:
             btns = pg.locator(S.MODAL_CONFIRM_BUTTON)
@@ -401,7 +416,10 @@ def dismiss_all_popups(context) -> int:
             try:
                 if b.is_visible():
                     b.click(timeout=2000)
-                    LOGGER.info("popup/모달 '확인' dismiss (url=%s, body=%r)", pg.url, body[:60])
+                    LOGGER.info(
+                        "popup/모달 '확인' dismiss (url=%s, modal=%r)",
+                        pg.url, (modal_txt or body)[:200],
+                    )
                     count += 1
                     time.sleep(random.uniform(0.5, 0.9))
                     break

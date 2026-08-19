@@ -1,6 +1,6 @@
-"""Microsoft Teams notifier (team_mcp 사용). srt_watcher 와 동일 구조.
+"""Microsoft Teams notifier (team_mcp 사용).
 
-prefix 만 ``[binjari KTX]`` 로 변경.
+prefix 는 ``[binjari KTX]``.
 """
 
 from __future__ import annotations

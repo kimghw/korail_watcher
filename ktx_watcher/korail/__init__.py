@@ -21,10 +21,15 @@ class UserActionRequired(KorailError):
     """사용자 개입 필요 (예: 추가 본인인증)."""
 
 
+class ReservationFailed(KorailError):
+    """예매 클릭 후 예약이 실제로 성립하지 않음 (잔여석 소진 등) — 다음 iteration 재시도."""
+
+
 __all__ = [
     "KorailError",
     "CaptchaDetected",
     "LoginError",
     "SiteLayoutChanged",
     "UserActionRequired",
+    "ReservationFailed",
 ]

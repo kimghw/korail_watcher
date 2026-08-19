@@ -19,6 +19,13 @@ DATE_INPUT = "input#startDate"
 DATE_PICKER_BTN = "a.btn_pop.btn_d-day"
 SEARCH_SUBMIT = "button.btn_lookup"
 SEARCH_FORM_DETECT = "button.btn_lookup, input[name='txtGoStart']"
+# "에스알티(SRT) 함께 보기" — VERIFIED 2026-08-18 (CDP DOM probe)
+#   폼(search/general): 숨김 옵션 영역(.selectAreaWrap.inline, display:none) 안 라디오
+#     <input type="radio" name="srtCheckYn" value="Y|N"> (기본 N) → JS click 으로 토글
+#   결과(search/list): <input type="checkbox" id="srtCheckYn" name="srtCheckYn">
+SRT_RADIO_Y = "input[name='srtCheckYn'][value='Y']"
+SRT_RESULT_CHECKBOX = "input#srtCheckYn[type='checkbox']"
+SRT_RESULT_CHECKBOX_LABEL = "label[for='srtCheckYn']"
 
 # 인원 선택 팝업 — VERIFIED 2026-07-07 (CDP DOM probe)
 #   폼의 <a class="data btn_pop">총 1명</a> 클릭 → .layerWrap.personnel_pop_wrap

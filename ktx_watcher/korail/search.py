@@ -471,7 +471,7 @@ def _parse_result_rows(page: Page) -> List[Dict[str, Any]]:
             containers.forEach((el, i) => {
                 const t = (el.textContent || '').trim();
                 if (!/\\d{1,2}:\\d{2}/.test(t)) return;
-                if (!/KTX|새마을|무궁화|ITX|누리로|청룡/i.test(t)) return;
+                if (!/KTX|새마을|무궁화|ITX|누리로|청룡|SRT/i.test(t)) return;
 
                 const parseBox = (box) => {
                     if (!box) return null;
@@ -513,7 +513,7 @@ def _parse_result_rows(page: Page) -> List[Dict[str, Any]]:
         t = _parse_depart_time(text)
         if not t:
             continue
-        name_m = re.search(r"(KTX[-\w]*|새마을[\w]*|무궁화[\w]*|ITX[-\w]*|누리로|청룡)", text)
+        name_m = re.search(r"(KTX[-\w]*|SRT|새마을[\w]*|무궁화[\w]*|ITX[-\w]*|누리로|청룡)", text)
         train_name = name_m.group(1) if name_m else ""
 
         rows.append({
@@ -555,6 +555,50 @@ def navigate_to_search(client: KorailSPAClient) -> Page:
         except Exception:
             break
     return page
+
+
+def _set_srt_option(page: Page, config: KTXAConfig) -> None:
+    """검색 폼의 '에스알티(SRT) 함께 보기' 라디오를 켠다 (KTXA_INCLUDE_SRT=true 일 때).
+
+    라디오가 든 옵션 영역(.selectAreaWrap.inline)이 display:none 이라
+    Playwright click 이 불가 → JS click (hidden 이어도 change 이벤트 발생, React 반영 확인됨).
+    """
+    if not config.ktxa_include_srt:
+        return
+    try:
+        state = page.evaluate(
+            """(sel) => {
+                const y = document.querySelector(sel);
+                if (!y) return 'missing';
+                if (y.checked) return 'already';
+                y.click();
+                return y.checked ? 'set' : 'FAIL';
+            }""",
+            S.SRT_RADIO_Y,
+        )
+    except Exception as e:
+        LOGGER.warning("SRT 함께 보기 설정 실패 (계속 진행): %s", e)
+        return
+    if state in ("missing", "FAIL"):
+        LOGGER.warning("SRT 함께 보기 라디오 적용 실패: %s — site layout 변경 가능", state)
+    else:
+        LOGGER.info("SRT 함께 보기 ON (%s)", state)
+
+
+def _ensure_srt_on_result(page: Page) -> None:
+    """결과 페이지(search/list)의 SRT 체크박스가 풀려 있으면 다시 켠다 (클릭 시 자동 재조회)."""
+    try:
+        cb = page.locator(S.SRT_RESULT_CHECKBOX).first
+        if cb.count() == 0 or cb.is_checked():
+            return
+        try:
+            page.locator(S.SRT_RESULT_CHECKBOX_LABEL).first.click(timeout=3000)
+        except Exception:
+            page.evaluate("(sel) => document.querySelector(sel)?.click()", S.SRT_RESULT_CHECKBOX)
+        human_pause(1.5, 2.5)
+        LOGGER.info("결과 페이지 SRT 함께 보기 재활성화")
+    except Exception as e:
+        LOGGER.warning("결과 페이지 SRT 체크 확인 실패 (계속 진행): %s", e)
 
 
 def fill_search_form(page: Page, config: KTXAConfig) -> None:
@@ -605,6 +649,46 @@ def submit_search(page: Page) -> List[Dict[str, Any]]:
     return _parse_result_rows(page)
 
 
+def _expand_more_until(
+    page: Page,
+    config: KTXAConfig,
+    raw: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    """감시 대상 최댓 시각(+허용오차/시간창)까지 행이 로드되도록 '더보기' 로 확장.
+
+    결과 페이지는 첫 화면에 일부 행만 주고 나머지는 '더보기' 로 이어 붙인다.
+    KTXA_TIMES 가 오후·저녁까지 걸치면 확장 없이는 해당 후보가 아예 파싱되지 않는다.
+    """
+    if not raw or not config.ktxa_times:
+        return raw
+    latest = max(config.ktxa_times)
+    limit_min = latest.hour * 60 + latest.minute + max(config.ktxa_tolerance_min, 0)
+    if config.ktxa_time_window:
+        wend = config.ktxa_time_window[1]
+        limit_min = max(limit_min, wend.hour * 60 + wend.minute)
+    limit_min = min(limit_min, 24 * 60 - 1)
+
+    for _ in range(15):
+        last = raw[-1].get("depart_time")
+        if last and (last.hour * 60 + last.minute) >= limit_min:
+            break
+        try:
+            btn = page.get_by_role("button", name="더보기").first
+            if btn.count() == 0 or not btn.is_visible():
+                break
+            human_click(btn)
+        except Exception as e:
+            LOGGER.debug("더보기 확장 중단: %s", e)
+            break
+        human_pause(0.8, 1.4)
+        try:
+            raw = _parse_result_rows(page)
+        except Exception as e:
+            LOGGER.warning("더보기 확장 후 파싱 race: %s — 기존 행 유지", e)
+            break
+    return raw
+
+
 def perform_search(
     client: KorailSPAClient,
     config: KTXAConfig,
@@ -627,6 +711,8 @@ def perform_search(
         if dismissed:
             LOGGER.info("매크로 안내 dismiss 됨 (reload) — 이번 iteration 빈 결과")
             return []
+        if config.ktxa_include_srt:
+            _ensure_srt_on_result(page)
         try:
             raw = _parse_result_rows(page)
         except Exception as e:
@@ -648,6 +734,9 @@ def perform_search(
             _set_passengers(page, config)
             human_pause(0.8, 1.4)
 
+        _set_srt_option(page, config)
+        human_pause(0.5, 1.0)
+
         # 열차종류 필터 탭 — 검색 제출 *전* 옵션은 적용 안 함. 결과 페이지에서 클릭.
         raw = submit_search(page)
 
@@ -661,14 +750,23 @@ def perform_search(
                 LOGGER.warning("KTX 탭 후 row 파싱 race: %s", e)
                 raw = []
 
+    # 감시 대상 최댓 시각까지 '더보기' 확장 (첫 화면엔 일부 행만 로드됨)
+    raw = _expand_more_until(page, config, raw)
+
     # 사용자 선호 시간/좌석 매칭 후보로 압축
     # KTXA_SEAT_CLASS 가 비어 있으면 일반실+특실 둘 다 후보로 만든다 (ANY).
     seat_pref = (config.ktxa_seat_class or "").strip()
     want_general = (not seat_pref) or ("일반실" in seat_pref)
     want_special = (not seat_pref) or ("특실" in seat_pref)
     candidates: List[Dict[str, Any]] = []
+    type_dropped = 0
     for r in raw:
         if not _is_candidate_time(r["depart_time"], config):
+            continue
+        # 열차종류 이중 방어 — 탭 클릭이 실패하면 '전체' 목록이 그대로 파싱된다
+        # (2026-07-25 실측: KTXA_TRAIN_TYPE=KTX 인데 ITX-새마을 row 가 후보로 잡혀 예약 진행됨)
+        if not _train_type_matches(r["train_name"], config.ktxa_train_type):
+            type_dropped += 1
             continue
         # 실측 (2026-05-14): row 텍스트의 일반실/특실 직후 30자가 status.
         #   예약 가능: "23,700원5%적립..." (가격 표시)
@@ -695,8 +793,12 @@ def perform_search(
                 kind = "standing"
             else:
                 continue
-            # 좌석 직행만: 입석+좌석/예약대기 후보 제외
-            if config.ktxa_seated_only and kind != "reserve":
+            # SRT row 는 코레일 내 결제 불가 ('예매링크' → SRT 사이트 이동, 실측 2026-08-18)
+            # → 알림 전용 후보로 표시. main 루프가 예약 시도 없이 Teams 알림만 보낸다.
+            if r["train_name"].upper().startswith("SRT"):
+                kind = "srt_link"
+            # 좌석 직행만: 입석+좌석/예약대기 후보 제외 (srt_link 는 알림용이라 유지)
+            if config.ktxa_seated_only and kind not in ("reserve", "srt_link"):
                 continue
             candidates.append({
                 "origin": config.ktxa_origin,
@@ -712,8 +814,34 @@ def perform_search(
                 "_raw": r["depart_raw"],
             })
     candidates.sort(key=lambda c: c["depart_time"])
+    if type_dropped:
+        LOGGER.info("열차종류 불일치 %d건 제외 (KTXA_TRAIN_TYPE=%s)", type_dropped, config.ktxa_train_type)
     LOGGER.info("후보 %d건 (전체 row %d건)", len(candidates), len(raw))
     return candidates
+
+
+# 열차종류 → row 열차명 매칭 키워드 (TRAIN_TYPE_TAB 의 탭 그룹과 동일 구성)
+_TRAIN_TYPE_GROUPS = {
+    "KTX": ("KTX", "청룡"),
+    "KTX-산천": ("KTX", "청룡"),
+    "새마을": ("새마을",),
+    "ITX-새마을": ("새마을",),
+    "무궁화": ("무궁화", "누리로"),
+    "누리로": ("무궁화", "누리로"),
+    "ITX-청춘": ("ITX-청춘",),
+}
+
+
+def _train_type_matches(train_name: str, train_type: str) -> bool:
+    """탭 클릭 실패 대비 이중 방어 — row 열차명으로 열차종류 재검증."""
+    if not train_type or train_type in ("전체", "ALL"):
+        return True
+    keys = _TRAIN_TYPE_GROUPS.get(train_type)
+    if keys is None:
+        return True  # 미지원 값은 탭 클릭 동작에 맡긴다
+    if not train_name:
+        return False  # 열차명 파싱 실패 row 는 오예약 방지 위해 제외
+    return any(k in train_name for k in keys)
 
 
 def _is_candidate_time(t: Time, config: KTXAConfig) -> bool:
