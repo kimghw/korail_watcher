@@ -33,11 +33,11 @@ runs/
 # binjari_setup 스킬이 머신별로 생성 (경로가 PC 마다 다름)
 launch_binjari.bat
 
+# env 실값 전체 차단 (로그인·카드·Azure 시크릿) — 양식(example)만 커밋 허용
 .env
-# 자격증명·카드정보 실값 — 양식은 .env.ktx.example 사용
-.env.ktx
-# azure_env_export 스킬 산출물 (Azure 시크릿 실값)
-.env.azure
+.env.*
+!.env.*.example
+!.env.example
 
 # 인증 DB (OAuth 토큰 등 비밀 포함)
 *.db
