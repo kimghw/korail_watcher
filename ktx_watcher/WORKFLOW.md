@@ -88,11 +88,11 @@
 | `KTXA_PAYMENT_MODE` | 결제까지 자동 진행 | `true` |
 | `KTXA_POLL_MIN` / `KTXA_POLL_MAX` | iteration 간 대기 (초) | `6` / `10` |
 | `KTXA_ONCE` | 한 번만 시도 후 종료 | `false` |
-| `PAY_CARD_NUM` | 카드 16자리 (`-` 4등분) | `9435-2017-1431-6569` |
+| `PAY_CARD_NUM` | 카드 16자리 (`-` 4등분) | `9999-9999-9999-9999` |
 | `PAY_CARD_MM` | 유효기간 월 | `12` |
 | `PAY_CARD_YY` | 유효기간 연 (YYYY) | `2027` |
-| `PAY_CARD_PW2` | 카드 비밀번호 앞 2자리 | `08` |
-| `PAY_ID6` | 인증번호 (YYMMDD) | `820909` |
+| `PAY_CARD_PW2` | 카드 비밀번호 앞 2자리 | `00` |
+| `PAY_ID6` | 인증번호 (YYMMDD) | `000000` |
 
 ---
 
