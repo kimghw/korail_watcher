@@ -76,7 +76,59 @@ if (-not $NoIcon) {
     Write-Host "[binjari_setup] 바탕화면 아이콘: $lnk"
 }
 
-# ── 5) claude CLI 검토 (웹 채팅 도우미 · AI 자동 복구 폴백이 사용) ──
+# ── 5) .env.azure 로 Teams/Azure OAuth 초기화 ──
+# azure_env_export 스킬이 만든 .env.azure (AZURE_* + DB_PATH) 가 프로젝트 루트에 있으면
+# .env.ktx 에 병합한다. .env.ktx 가 없으면 .env.ktx.example 복사로 먼저 생성 (신규 PC 초기화).
+$envAzure = Join-Path $root ".env.azure"
+$envKtx = Join-Path $root ".env.ktx"
+$envExample = Join-Path $root ".env.ktx.example"
+if (-not (Test-Path $envKtx)) {
+    if (Test-Path $envExample) {
+        Copy-Item $envExample $envKtx
+        Write-Host "[binjari_setup] .env.ktx 없음 → .env.ktx.example 복사로 생성 (<...> 자리표시자는 웹 환경 설정에서 입력)"
+    }
+}
+if ((Test-Path $envAzure) -and (Test-Path $envKtx)) {
+    $azure = @{}
+    foreach ($line in Get-Content $envAzure -Encoding UTF8) {
+        # AZURE_* 와 DB_PATH 만 취한다 (다른 키가 섞여 있어도 무시)
+        if ($line -match '^\s*(AZURE_[A-Z_]+|DB_PATH)\s*=\s*(.*)$') {
+            $azure[$Matches[1]] = $Matches[2].Trim()
+        }
+    }
+    # DB_PATH 의 폴더가 이 PC 에 없으면 프로젝트 기준 기본 경로로 대체
+    if ($azure.ContainsKey("DB_PATH")) {
+        $dbDir = Split-Path -Parent $azure["DB_PATH"]
+        if (-not (Test-Path $dbDir)) {
+            $azure["DB_PATH"] = ((Join-Path $root "team_mcp\database\auth.db") -replace '\\', '/')
+            Write-Host "[binjari_setup] DB_PATH 경로가 이 PC 에 없어 프로젝트 기본 경로로 대체"
+        }
+    }
+    $lines = @(Get-Content $envKtx -Encoding UTF8)
+    $applied = @()
+    foreach ($k in @($azure.Keys)) {
+        $found = $false
+        for ($i = 0; $i -lt $lines.Count; $i++) {
+            if ($lines[$i] -match "^\s*$k\s*=") { $lines[$i] = "$k=$($azure[$k])"; $found = $true; break }
+        }
+        if (-not $found) { $lines += "$k=$($azure[$k])" }
+        $applied += $k
+    }
+    [System.IO.File]::WriteAllLines($envKtx, $lines, (New-Object System.Text.UTF8Encoding $false))
+    Write-Host "[binjari_setup] .env.azure 적용 ($($applied.Count)개 키): $($applied -join ', ')"
+
+    # OAuth 토큰 DB 확인
+    $db = $azure["DB_PATH"]
+    if ($db -and (Test-Path $db)) {
+        Write-Host "[binjari_setup] auth.db OK: $db"
+    } elseif ($db) {
+        Write-Host "[binjari_setup] ⚠ auth.db 없음 ($db) — Teams 알림을 쓰려면 'python -m team_mcp.login' 으로 OAuth 로그인 필요 (korail_alarm 스킬 참고)"
+    }
+} elseif (-not (Test-Path $envAzure)) {
+    Write-Host "[binjari_setup] .env.azure 없음 — Azure/Teams 초기화 건너뜀 (azure_env_export 스킬로 만든 파일을 프로젝트 루트에 두면 자동 적용)"
+}
+
+# ── 6) claude CLI 검토 (웹 채팅 도우미 · AI 자동 복구 폴백이 사용) ──
 $claude = $null
 $cmd = Get-Command claude -ErrorAction SilentlyContinue
 if ($cmd) { $claude = $cmd.Source }

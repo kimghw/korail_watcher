@@ -1,6 +1,6 @@
 ---
 name: binjari_setup
-description: binjari 웹서버 설치·셋업 — 의존성 라이브러리 설치(필요 시 .venv 생성), 실행 런처(launch_binjari.bat) 생성, 바탕화면 'binjari' 아이콘 설치, 채팅·AI 복구용 claude CLI(exe) 설정 검토. 사용자가 "설치", "셋업", "바탕화면 아이콘", "새 PC 세팅", "의존성 설치" 등을 말하면 시작. 절차 — (1) scripts/setup.ps1 실행 (2) 아이콘·런처·의존성·claude CLI 검증 (3) 결과 보고.
+description: binjari 웹서버 설치·셋업 — 의존성 라이브러리 설치(필요 시 .venv 생성), 실행 런처(launch_binjari.bat) 생성, 바탕화면 'binjari' 아이콘 설치, .env.azure 로 Azure/Teams 설정 초기화(.env.ktx 병합, 없으면 example 복사 생성), 채팅·AI 복구용 claude CLI(exe) 설정 검토. 사용자가 "설치", "셋업", "바탕화면 아이콘", "새 PC 세팅", "의존성 설치" 등을 말하면 시작. 절차 — (1) scripts/setup.ps1 실행 (2) 아이콘·런처·의존성·env·claude CLI 검증 (3) 결과 보고.
 ---
 
 # binjari_setup — 웹서버 설치·바탕화면 아이콘
@@ -13,7 +13,8 @@ description: binjari 웹서버 설치·셋업 — 의존성 라이브러리 설�
 2. **의존성 설치**: pyproject.toml 의 dependencies 와 동일한 목록을 pip 으로 설치 (충족된 건 skip).
 3. **런처 생성**: 프로젝트 루트에 `launch_binjari.bat` — 포트 8001 이 안 떠 있으면 서버를 백그라운드(pythonw, 콘솔 창 없음)로 띄운 뒤 기본 브라우저로 http://localhost:8001 을 연다.
 4. **바탕화면 아이콘**: `binjari.lnk` 를 바탕화면에 생성 (아이콘은 Chrome 아이콘, 없으면 시스템 기본). `-NoIcon` 으로 생략 가능.
-5. **claude CLI 검토**: 웹 채팅 도우미(`/api/chat`)와 AI 자동 복구 폴백(fable→opus)이 쓰는 claude CLI(exe)가 있는지 확인 — PATH → `~\.local\bin\claude.exe` → `%APPDATA%\npm\claude.cmd` 순으로 탐색(web_server 의 `_find_claude` 와 동일 순서). 있으면 버전 출력, 없으면 설치 안내(https://claude.com/claude-code)를 경고로 남긴다. 자동 설치는 하지 않는다 (로그인이 필요해서 사용자가 직접).
+5. **.env.azure 초기화**: 프로젝트 루트에 `.env.azure`(azure_env_export 스킬 산출물) 가 있으면 그 안의 **AZURE_* 키와 DB_PATH 만** 골라 `.env.ktx` 에 병합한다 (다른 키가 섞여 있어도 무시). `.env.ktx` 가 없으면 `.env.ktx.example` 복사로 먼저 생성한다 (신규 PC 초기화). DB_PATH 의 폴더가 이 PC 에 없으면 `<프로젝트>/team_mcp/database/auth.db` 로 대체. 병합 후 auth.db 존재를 확인해 없으면 `python -m team_mcp.login` OAuth 안내를 남긴다 (자동으로 브라우저 로그인을 띄우지는 않음 — korail_alarm 스킬 담당). **시크릿 값은 출력하지 않는다 — 키 이름만.**
+6. **claude CLI 검토**: 웹 채팅 도우미(`/api/chat`)와 AI 자동 복구 폴백(fable→opus)이 쓰는 claude CLI(exe)가 있는지 확인 — PATH → `~\.local\bin\claude.exe` → `%APPDATA%\npm\claude.cmd` 순으로 탐색(web_server 의 `_find_claude` 와 동일 순서). 있으면 버전 출력, 없으면 설치 안내(https://claude.com/claude-code)를 경고로 남긴다. 자동 설치는 하지 않는다 (로그인이 필요해서 사용자가 직접).
 
 ## 실행
 
@@ -30,6 +31,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "<프로젝트루트>\.claud
 - [ ] 바탕화면에 `binjari.lnk` 가 있다 (`-NoIcon` 아니면).
 - [ ] 선택한 python 으로 `import fastapi, uvicorn, playwright, aiohttp` 가 된다.
 - [ ] claude CLI 가 `claude CLI OK` 로 확인됐다 — 없으면 사용자에게 채팅·AI 복구가 비활성임을 알린다.
+- [ ] `.env.azure` 가 있었다면 `.env.azure 적용 (N개 키)` 가 출력됐고, `.env.ktx` 의 AZURE_* 값이 채워졌다 (값 자체는 화면에 노출 금지).
+- [ ] auth.db 가 없다는 경고가 나왔다면 Teams 알림 셋업(`python -m team_mcp.login` / korail_alarm 스킬)을 사용자에게 안내했다.
 
 ## 주의
 
