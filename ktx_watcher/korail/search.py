@@ -167,17 +167,54 @@ def _click_day(page: Page, day: int, year: Optional[int] = None, month: Optional
 
 
 def _click_hour(page: Page, hour: int) -> bool:
-    return bool(page.evaluate(
-        """(texts) => {
-            const root = document.querySelector('.layerWrap.type_date-pop_wrap .timeSelect');
-            if (!root) return false;
-            for (const a of root.querySelectorAll('a')) {
-                if (texts.includes((a.textContent || '').trim())) { a.click(); return true; }
+    """시각 선택. timeSelect 는 slick 캐러셀 (한 번에 5개만 노출) —
+    비노출 anchor 는 aria-disabled=true 라 클릭이 무효 (2026-08-19 CDP 실측).
+    목표 시각이 화면 밖이면 화살표로 스크롤한 뒤 클릭한다.
+    """
+    texts = [f"{hour}시", f"{hour:02d}시"]
+    probe_js = """(texts) => {
+        const root = document.querySelector('.layerWrap.type_date-pop_wrap .timeSelect');
+        if (!root) return 'absent';
+        const slides = [...root.querySelectorAll('.slick-slide')];
+        let target = null, targetIdx = -1, firstActive = -1;
+        slides.forEach((s, i) => {
+            const a = s.querySelector('a');
+            if (s.classList.contains('slick-active') && firstActive < 0) firstActive = i;
+            if (!target && a && texts.includes((a.textContent || '').trim())) {
+                target = a; targetIdx = i;
             }
-            return false;
-        }""",
-        [f"{hour}시", f"{hour:02d}시"],
-    ))
+        });
+        // 캐러셀이 아닌 (구형) 평면 목록 fallback
+        if (!slides.length) {
+            for (const a of root.querySelectorAll('a')) {
+                if (texts.includes((a.textContent || '').trim())) {
+                    if (a.getAttribute('aria-disabled') === 'true') return 'absent';
+                    a.click(); return 'clicked';
+                }
+            }
+            return 'absent';
+        }
+        if (!target) return 'absent';
+        if (target.getAttribute('aria-disabled') !== 'true') { target.click(); return 'clicked'; }
+        return targetIdx < firstActive ? 'prev' : 'next';
+    }"""
+    arrow_js = """(dir) => {
+        const btn = document.querySelector(
+            '.layerWrap.type_date-pop_wrap .timeSelect .slick-' + dir);
+        if (!btn || btn.classList.contains('slick-disabled')) return false;
+        btn.click(); return true;
+    }"""
+    for _ in range(24):
+        state = page.evaluate(probe_js, texts)
+        if state == "clicked":
+            return True
+        if state == "absent":
+            return False
+        if not page.evaluate(arrow_js, state):
+            return False  # 화살표 끝까지 갔는데 목표 시각 미노출
+        # slick 애니메이션(~0.5s) 중 클릭은 무시됨 — humanize 여부와 무관하게 대기
+        page.wait_for_timeout(650)
+    return False
 
 
 def _set_date(page: Page, target: _date, hour: int) -> None:
@@ -266,13 +303,18 @@ def _set_date(page: Page, target: _date, hour: int) -> None:
     human_pause(0.3, 0.6)
 
     if not _click_hour(page, hour):
-        # 가용한 다음 시각 fallback
+        # 가용한 다음 시각 fallback (오늘 날짜는 사이트가 현재 시각 이후만 제공 —
+        # 2026-08-19 CDP 실측: timeSelect 에 현재시~23시만 렌더링됨)
         for h in list(range(hour + 1, 24)) + list(range(0, hour)):
             if _click_hour(page, h):
-                LOGGER.info("대체 시각 적용: %02d시", h)
+                LOGGER.warning("요청 시각 %02d시 선택 불가 — 대체 시각 적용: %02d시", hour, h)
                 break
+        else:
+            LOGGER.warning("시각 선택 전부 실패 (%02d시 요청) — 사이트 기본값으로 진행", hour)
     human_pause(0.3, 0.6)
 
+    # 안내 모달(ReactModal)이 뒤늦게 떠서 적용 버튼 클릭을 가로챌 수 있음
+    dismiss_notice_modal(page)
     try:
         page.locator(S.DATE_POPUP_APPLY).first.click(timeout=4000)
     except Exception as e:
@@ -696,7 +738,18 @@ def perform_search(
     # 이미 결과 페이지(/search/list)에 있으면 폼 재진입 없이 reload 만 (사람-유사 새로고침).
     page = client.main_page()
     cur_url = page.url or ""
-    if "/search/list" in cur_url:
+    on_result = "/search/list" in cur_url
+    if on_result:
+        # 페이지가 설정과 다른 날짜를 보고 있으면 reload 반복은 무의미 — 폼 재진입.
+        # (2026-08-19 실측: 시작 시 stale 설정으로 오늘 페이지가 잡히면 영원히 후보 0건)
+        page_date = _input_value(page, S.DATE_INPUT)
+        if page_date and not page_date.startswith(config.ktxa_date.isoformat()):
+            LOGGER.warning(
+                "결과 페이지 날짜 불일치 (페이지=%r, 설정=%s) — 검색 폼 재진입",
+                page_date, config.ktxa_date.isoformat(),
+            )
+            on_result = False
+    if on_result:
         LOGGER.info("결과 페이지에서 새로고침 (URL: %s)", cur_url)
         try:
             page.reload(wait_until="domcontentloaded", timeout=20_000)

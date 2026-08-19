@@ -66,6 +66,7 @@ SETTINGS_KEYS = [
     "KTXA_POLL_MIN", "KTXA_POLL_MAX", "KTXA_LOG_DIR", "KTXA_LOG_LEVEL",
     # 브라우저 (CDP)
     "KTXA_CDP_PORT", "KTXA_CDP_USER_DATA_DIR", "KTXA_CDP_STARTUP_TIMEOUT",
+    "KTXA_VDESK",
     # Teams 알림
     "TEAMS_ENABLED", "TEAMS_USER_EMAIL", "TEAMS_CHAT_ID",
     "TEAMS_RECIPIENT_NAME", "TEAMS_PREFIX",
@@ -248,6 +249,7 @@ def _live_fetch(config: KTXAConfig) -> List[Dict[str, Any]]:
         user_data_dir=config.ktxa_cdp_user_data_dir,
         exe_path=config.ktxa_chrome_exe,
         startup_timeout=config.ktxa_cdp_startup_timeout,
+        vdesk=config.ktxa_vdesk,
     )
     cdp_url = launcher.ensure_running()
     # Chrome 은 재사용을 위해 종료하지 않는다 (워처와 동일 정책)
@@ -2569,6 +2571,10 @@ SETTINGS_HTML = """
         <div class="field"><label>Chrome 프로필 폴더</label><input id="KTXA_CDP_USER_DATA_DIR" class="long"></div>
         <div class="field"><label>기동 타임아웃 (초)</label><input id="KTXA_CDP_STARTUP_TIMEOUT" type="number" class="short"></div>
       </div>
+      <div class="row">
+        <label class="check" title="조회·예약용 Chrome 창을 'binjari' 가상 데스크톱으로 자동 이동 — 작업 화면을 가리지 않음">
+          <input type="checkbox" id="KTXA_VDESK">브라우저를 별도 가상 데스크톱에서 실행</label>
+      </div>
     </details>
   </section>
 
@@ -2637,7 +2643,7 @@ const TEXT_IDS = [
 ];
 const BOOL_IDS = [
   'KTXA_SEATED_ONLY','KTXA_INCLUDE_SRT','KTXA_TRANSFER_ENABLED','KTXA_TRANSFER_SEND',
-  'KTXA_HUMANIZE','KTXA_ONCE','TEAMS_ENABLED',
+  'KTXA_HUMANIZE','KTXA_ONCE','TEAMS_ENABLED','KTXA_VDESK',
 ];
 let times = [];   // ['09:00', ...]
 
@@ -3785,41 +3791,94 @@ COMMON_JS = """
     renderRouteChips();
   };
 
-  // ── 감시 상태 위젯: <span id="watcherBar"> 가 있는 페이지 상단에 표시 ──
-  (function initWatcherBar() {
-    const bar = document.getElementById('watcherBar');
-    if (!bar) return;
-    bar.style.display = 'inline-flex';
-    bar.style.alignItems = 'center';
-    bar.style.gap = '8px';
-    bar.innerHTML =
-      '<span id="wbState" class="watcher-state"></span>' +
-      '<button id="wbStop" class="watcher-stop" type="button" hidden>감시 중지</button>';
-    const state = document.getElementById('wbState');
-    const stopBtn = document.getElementById('wbStop');
+  // ── 감시 시작/중지 플로팅 바: 모든 페이지 하단 중앙에 항상 고정 ──
+  (function initWatcherFab() {
+    const s2 = document.createElement('style');
+    s2.textContent = `
+      #watcherFab { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%);
+        z-index: 900; display: flex; align-items: center; gap: 10px;
+        padding: 9px 14px; border-radius: 999px;
+        background: rgba(255,255,255,.92); border: 1px solid rgba(0,0,0,.09);
+        box-shadow: 0 10px 34px rgba(0,0,0,.18);
+        -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+        font-size: 13px; white-space: nowrap; }
+      #watcherFab .wf-state { color: #555; }
+      #watcherFab .wf-state.running { color: #0a8a3c; font-weight: 700; }
+      #watcherFab .wf-state.err { color: #c07b00; }
+      #watcherFab button { border: 0; border-radius: 999px; padding: 8px 16px;
+        font-weight: 700; font-size: 13px; color: #fff; cursor: pointer; }
+      #watcherFab .wf-start { background: #0a8a3c; }
+      #watcherFab .wf-start:hover { background: #0da046; }
+      #watcherFab .wf-stop { background: #c02020; }
+      #watcherFab .wf-stop:hover { background: #d92c2c; }
+      #watcherFab button:disabled { opacity: .55; cursor: not-allowed; }
+    `;
+    document.head.appendChild(s2);
+    const fab = document.createElement('div');
+    fab.id = 'watcherFab';
+    fab.innerHTML =
+      '<span class="wf-state" id="wfState">감시 상태 확인 중…</span>' +
+      '<button type="button" class="wf-start" id="wfStart" hidden>▶ 감시 시작</button>' +
+      '<button type="button" class="wf-stop" id="wfStop" hidden>■ 감시 중지</button>';
+    document.body.appendChild(fab);
+    // 설정 페이지의 sticky 저장바와 겹치지 않게 위로 올림
+    if (document.querySelector('.savebar')) fab.style.bottom = '96px';
+    const state = document.getElementById('wfState');
+    const startBtn = document.getElementById('wfStart');
+    const stopBtn = document.getElementById('wfStop');
+    startBtn.onclick = async () => {
+      startBtn.disabled = true;
+      try {
+        if (window.startWatcher) {
+          await window.startWatcher();   // 설정 페이지: 설정 저장 후 시작
+        } else {
+          const r = await fetch('/api/watcher/start', { method: 'POST' });
+          const d = await r.json();
+          if (!r.ok) throw new Error(d.detail || r.status);
+        }
+      } catch (e) {
+        state.textContent = '시작 실패: ' + e.message;
+        state.className = 'wf-state err';
+      }
+      startBtn.disabled = false;
+      poll();
+    };
     stopBtn.onclick = async () => {
       if (!confirm('감시(발권 워처)를 중지할까요?')) return;
       stopBtn.disabled = true;
-      try { await fetch('/api/watcher/stop', { method: 'POST' }); } catch (e) {}
+      try {
+        if (window.stopWatcher) { await window.stopWatcher(); }
+        else { await fetch('/api/watcher/stop', { method: 'POST' }); }
+      } catch (e) {}
       stopBtn.disabled = false;
-      pollBar();
+      poll();
     };
-    async function pollBar() {
+    async function poll() {
       try {
         const s = await (await fetch('/api/watcher/status')).json();
         if (s.running) {
           state.textContent = '● 감시 실행 중 (' + (s.started_at || '') + '~)';
-          state.className = 'watcher-state running';
+          state.className = 'wf-state running';
+          startBtn.hidden = true;
           stopBtn.hidden = false;
         } else {
-          state.textContent = s.returncode === 0 ? '감시 완료' : '감시 꺼짐';
-          state.className = s.returncode === 0 ? 'watcher-state done' : 'watcher-state';
+          if (s.returncode === 0) {
+            state.textContent = '✅ 감시 완료';
+            state.className = 'wf-state running';
+          } else if (s.returncode !== null && s.returncode !== undefined) {
+            state.textContent = '감시 종료 (code ' + s.returncode + ')';
+            state.className = 'wf-state err';
+          } else {
+            state.textContent = '감시 꺼짐';
+            state.className = 'wf-state';
+          }
+          startBtn.hidden = false;
           stopBtn.hidden = true;
         }
       } catch (e) { /* 서버 미응답 — 다음 폴링 */ }
     }
-    pollBar();
-    setInterval(pollBar, 6000);
+    poll();
+    setInterval(poll, 5000);
   })();
 
   fetch('/api/stations').then(r => r.json()).then(data => {

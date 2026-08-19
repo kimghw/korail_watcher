@@ -46,6 +46,8 @@ class KTXAConfig(BaseModel):
         None, alias="KTXA_CDP_USER_DATA_DIR"
     )
     ktxa_cdp_startup_timeout: float = Field(15.0, alias="KTXA_CDP_STARTUP_TIMEOUT")
+    # true 면 Chrome 창을 별도 가상 데스크톱("binjari")으로 자동 이동 (작업 화면 방해 X)
+    ktxa_vdesk: bool = Field(False, alias="KTXA_VDESK")
 
     # ─ Trip ─
     ktxa_origin: str = Field(alias="KTXA_ORIGIN")
@@ -162,7 +164,7 @@ class KTXAConfig(BaseModel):
         return s, e
 
     @field_validator("ktxa_once", "teams_enabled", "ktxa_payment_mode", "ktxa_seated_only",
-                     "ktxa_transfer_enabled", "ktxa_transfer_send", mode="before")
+                     "ktxa_transfer_enabled", "ktxa_transfer_send", "ktxa_vdesk", mode="before")
     @classmethod
     def _parse_bool(cls, v):
         return _boolify(v)

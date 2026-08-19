@@ -100,6 +100,8 @@ class ChromeLauncher:
         user_data_dir: Optional[Path] = None,
         exe_path: Optional[str] = None,
         startup_timeout: float = 15.0,
+        vdesk: bool = False,
+        vdesk_name: str = "binjari",
     ) -> None:
         self.port = port
         self.user_data_dir = (
@@ -107,6 +109,8 @@ class ChromeLauncher:
         )
         self.exe_path = exe_path or self._find_chrome_exe()
         self.startup_timeout = startup_timeout
+        self.vdesk = vdesk
+        self.vdesk_name = vdesk_name
         self._proc: Optional[subprocess.Popen] = None  # watcher 가 띄운 경우만 set
         self._reused_existing = False
 
@@ -128,6 +132,7 @@ class ChromeLauncher:
         if _cdp_alive(self.port):
             LOGGER.info("Chrome 디버그 인스턴스 이미 살아있음: port=%d (재사용)", self.port)
             self._reused_existing = True
+            self._move_to_vdesk()
             return self.cdp_url
 
         args = [
@@ -136,6 +141,10 @@ class ChromeLauncher:
             "--remote-allow-origins=*",
             "--no-first-run",
             "--no-default-browser-check",
+            # 다른 가상 데스크톱/가려진 창에서도 렌더링·타이머 스로틀링 방지
+            "--disable-features=CalculateNativeWinOcclusion",
+            "--disable-backgrounding-occluded-windows",
+            "--disable-renderer-backgrounding",
         ]
         if self.user_data_dir:
             self.user_data_dir.mkdir(parents=True, exist_ok=True)
@@ -156,6 +165,7 @@ class ChromeLauncher:
         while time.time() < deadline:
             if _cdp_alive(self.port):
                 LOGGER.info("Chrome CDP 준비 완료 (port=%d)", self.port)
+                self._move_to_vdesk()
                 return self.cdp_url
             time.sleep(0.3)
 
@@ -164,6 +174,44 @@ class ChromeLauncher:
         raise RuntimeError(
             f"Chrome 디버그 포트 {self.port} 가 {self.startup_timeout}s 안에 응답하지 않음"
         )
+
+    def _move_to_vdesk(self) -> None:
+        """Chrome 창을 별도 가상 데스크톱(vdesk_name)으로 이동. 실패해도 진행.
+
+        vdesk_move.ps1 이 VirtualDesktop 모듈(내부 API)로 이동한다 —
+        문서화된 IVirtualDesktopManager 는 타 프로세스 창에 Access Denied.
+        창이 CDP 준비보다 늦게 뜰 수 있어 짧게 재시도한다.
+        """
+        if not self.vdesk:
+            return
+        script = Path(__file__).with_name("vdesk_move.ps1")
+        cmd = [
+            "powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+            "-File", str(script),
+            "-Port", str(self.port), "-Name", self.vdesk_name,
+        ]
+        for attempt in range(3):
+            try:
+                r = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=30.0,
+                    encoding="utf-8", errors="replace",
+                )
+            except Exception as e:
+                LOGGER.warning("vdesk 이동 실행 실패: %s", e)
+                return
+            out = (r.stdout or "").strip()
+            if r.returncode == 0:
+                LOGGER.info("Chrome 창 가상 데스크톱 이동: %s", out)
+                return
+            if r.returncode == 4:  # 창이 아직 안 뜸 → 재시도
+                time.sleep(1.0)
+                continue
+            LOGGER.warning(
+                "vdesk 이동 skip (exit=%d): %s %s",
+                r.returncode, out, (r.stderr or "").strip()[:200],
+            )
+            return
+        LOGGER.warning("vdesk 이동 포기: Chrome 창을 찾지 못함 (port=%d)", self.port)
 
     def shutdown_if_owned(self) -> None:
         """watcher 가 띄운 인스턴스만 종료. 사용자가 띄운 건 건드리지 않음."""

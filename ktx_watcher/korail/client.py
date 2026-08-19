@@ -365,6 +365,29 @@ _INFO_KEYWORDS = S.MACRO_NOTICE_KEYWORDS + (
     "약관",
 )
 
+# "계속 진행하시겠습니까?" 류 진행 확인 모달 (아니오/네) → '네' 클릭으로 통과.
+# 2026-08-19 실측: "정차역 수가 적어 가격이 최대 0.6% 높습니다. 계속 진행하시겠습니까?"
+# 이 문구 없이 '네' 를 누르면 취소류 모달을 오확인할 수 있어 키워드 필수.
+_PROCEED_KEYWORDS = ("진행하시겠습니까",)
+
+
+def _click_proceed_if_asked(pg: Page, txt: str) -> bool:
+    """모달 텍스트가 진행 확인형이면 '네' 클릭. 성공 시 True."""
+    if not any(kw in txt for kw in _PROCEED_KEYWORDS):
+        return False
+    try:
+        btns = pg.locator(S.MODAL_PROCEED_BUTTON)
+        for i in range(btns.count()):
+            b = btns.nth(i)
+            if b.is_visible():
+                b.click(timeout=2000)
+                LOGGER.info("진행 확인 모달 '네' 클릭 (modal=%r)", txt[:150])
+                time.sleep(random.uniform(0.5, 0.9))
+                return True
+    except Exception as e:
+        LOGGER.debug("진행 확인 '네' 클릭 실패: %s", e)
+    return False
+
 
 def dismiss_all_popups(context) -> int:
     """**공통 popup 핸들러** — 현재 떠 있는 모든 page/popup 의 안내 모달 '확인' 클릭.
@@ -404,6 +427,11 @@ def dismiss_all_popups(context) -> int:
                     break
             except Exception:
                 continue
+
+        # 진행 확인형 모달 (아니오/네) 이면 '네' 클릭으로 예약 흐름 계속
+        if _click_proceed_if_asked(pg, modal_txt or body):
+            count += 1
+            continue
 
         # in-page ReactModal 인지 popup window 인지 무관 — visible 한 '확인' 버튼만 찾아 클릭
         try:
@@ -455,8 +483,10 @@ def attach_context_popup_guard(context) -> None:
                 pass
             return
 
-        # 안내성 popup → '확인' 클릭
+        # 안내성 popup → 진행 확인형이면 '네', 아니면 '확인' 클릭
         LOGGER.info("새 popup 감지 (안내성) → 확인 클릭: %s body=%r", new_page.url, body[:60])
+        if _click_proceed_if_asked(new_page, body):
+            return
         try:
             time.sleep(random.uniform(0.5, 1.0))
             btn = new_page.locator(S.MODAL_CONFIRM_BUTTON).first

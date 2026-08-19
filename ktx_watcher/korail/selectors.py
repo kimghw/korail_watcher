@@ -102,6 +102,9 @@ MACRO_NOTICE_KEYWORDS = (
     "비정상적인 접속",
 )
 MODAL_CONFIRM_BUTTON = "button:has-text('확인')"
+# "계속 진행하시겠습니까?" 류 진행 확인 모달의 긍정 버튼 (아니오/네 구성).
+# ':text-is' 정확 일치 — has-text 는 부분 일치라 '안내' 등에 오탐.
+MODAL_PROCEED_BUTTON = "button:text-is('네'), a:text-is('네')"
 
 # 광고/공지 모달 (예: "광명→천안아산 KTX 서행 알림" 운영기간성 공지).
 # 매크로 차단과 무관 — body 에 "창닫기" / "그만보기" / "알림" 같은 키워드 + 닫기 버튼.

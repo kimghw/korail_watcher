@@ -251,6 +251,7 @@ def main() -> int:
         user_data_dir=config.ktxa_cdp_user_data_dir,
         exe_path=config.ktxa_chrome_exe,
         startup_timeout=config.ktxa_cdp_startup_timeout,
+        vdesk=config.ktxa_vdesk,
     )
     try:
         cdp_url = launcher.ensure_running()
