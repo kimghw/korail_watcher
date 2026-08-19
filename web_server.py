@@ -1408,16 +1408,6 @@ details summary {
   padding-inline: 22px;
 }
 
-#btnStart {
-  background: var(--green) !important;
-  box-shadow: 0 5px 14px rgba(36, 138, 61, .20);
-}
-
-#btnStop {
-  background: var(--red) !important;
-  box-shadow: 0 5px 14px rgba(215, 0, 21, .18);
-}
-
 #saveStatus {
   min-width: 0;
   color: var(--text-secondary);
@@ -1852,7 +1842,6 @@ body #routeChips button {
     flex: 1;
   }
 
-  #wstate,
   #saveStatus {
     width: 100%;
   }
@@ -2617,10 +2606,6 @@ SETTINGS_HTML = """
   </details>
   <div class="savebar">
     <button type="button" id="btnSave" onclick="save()">저장</button>
-    <button type="button" id="btnStart" style="background:#0a8a3c;" onclick="startWatcher()"
-      title="설정을 자동 저장한 뒤 감시를 시작합니다">▶ 감시 시작</button>
-    <button type="button" id="btnStop" style="background:#c02020; display:none;" onclick="stopWatcher()">■ 감시 중지</button>
-    <span id="wstate" role="status" aria-live="polite"></span>
     <span id="saveStatus" role="status" aria-live="polite"></span>
   </div>
 </div>
@@ -3007,26 +2992,10 @@ async function save() {
 let wtimer = null;
 
 async function pollWatcher() {
+  // 감시 시작/중지·상태 표시는 플로팅 바(common.js watcherFab)가 전담.
+  // 여기서는 감시 로그 뷰만 갱신한다.
   try {
     const s = await (await fetch('/api/watcher/status')).json();
-    // 예매 설정 탭: [감시 시작/중지] 만, 환경 설정 탭: [저장] 만
-    const tripTab = new URLSearchParams(location.search).get('tab') !== 'env';
-    document.getElementById('btnSave').style.display = tripTab ? 'none' : '';
-    document.getElementById('btnStart').style.display = (tripTab && !s.running) ? '' : 'none';
-    document.getElementById('btnStop').style.display = (tripTab && s.running) ? '' : 'none';
-    const st = document.getElementById('wstate');
-    if (s.running) {
-      st.textContent = `● 감시 실행 중 (${s.started_at}~)`;
-      st.style.color = '#0a8a3c';
-    } else if (s.returncode === 0) {
-      st.textContent = '✅ 감시 종료 — 대상 확보 완료';
-      st.style.color = '#0a8a3c';
-    } else if (s.returncode !== null && s.returncode !== undefined) {
-      st.textContent = `감시 종료 (code ${s.returncode}) — 로그 확인`;
-      st.style.color = '#c07b00';
-    } else {
-      st.textContent = '';
-    }
     const wl = document.getElementById('wlog');
     wl.textContent = s.log_tail || '(로그 없음)';
     wl.scrollTop = wl.scrollHeight;
