@@ -89,6 +89,11 @@ def _maybe_transfer(
 # SRT 빈자리 알림 중복 방지 (프로세스 생존 동안 유지)
 _SRT_NOTIFIED: set = set()
 
+# 같은 열차(날짜·출발·좌석등급)에 대한 '후보 발견'/'예약 미성립' 반복 알림 방지.
+# 유령 좌석이 계속 검색에 잡혀도 Teams 알림은 처음 1회만, 이후엔 로그만 남긴다.
+# 예약이 실제로 성공하면 성공 알림은 별도로 나가므로 놓칠 일 없음.
+_CAND_NOTIFIED: set = set()
+
 # 이번 실행에서 이미 예약(hold/발권/예약대기)을 확보한 출발시각.
 # KTXA_TIMES 가 여러 개면 전부 확보할 때까지 감시를 계속하고,
 # 확보 건수가 감시 대상 수(len(ktxa_times)) 에 도달하면 종료한다.
@@ -150,11 +155,14 @@ def run_once(
         f"{best['origin']}→{best['dest']} {best['date']} {best['depart']} "
         f"[{best['seat_class']}] {best['status']} (kind={kind})"
     )
+    cand_key = (best["date"], best["depart"], best["seat_class"])
     LOGGER.info("후보 발견: %s", info_line)
-    _notify(notifier, f"후보 발견\n{info_line}")
+    if cand_key not in _CAND_NOTIFIED:
+        _notify(notifier, f"후보 발견\n{info_line}")
 
     if config.ktxa_mode == "search":
         LOGGER.info("MODE=search — 예약 시도 안 함")
+        _CAND_NOTIFIED.add(cand_key)
         return False
 
     # MODE=reserve — 예약 단계 통과 후 (KTXA_PAYMENT_MODE=true 면) 결제까지 연속
@@ -164,7 +172,13 @@ def run_once(
         _notify(notifier, f"✅ 예약 성공 (좌석 hold)\n{info_line}")
     except ReservationFailed as e:
         LOGGER.warning("예약 미성립 — 다음 iteration 재시도: %s", e)
-        _notify(notifier, f"⚠ 예약 미성립 (잔여석 소진 추정) — 다음 iteration 재시도\n{e}")
+        if cand_key not in _CAND_NOTIFIED:
+            _CAND_NOTIFIED.add(cand_key)
+            _notify(
+                notifier,
+                f"⚠ 예약 미성립 (잔여석 소진 추정) — 재시도는 계속하되 "
+                f"같은 열차 반복 알림은 생략\n{e}",
+            )
         return False
     except CaptchaDetected as e:
         LOGGER.warning("Captcha during reservation: %s", e)
